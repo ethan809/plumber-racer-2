@@ -19,6 +19,9 @@ It does **not** yet make the game work on A16 devices.
   `--nvn-swizzled --block-height-log2 N` and `--switch2` if necessary.
   Tests check the tile byte permutation for both Switch 1 and Switch 2 GOB
   layouts before converting a synthetic 64 KiB tile to ASTC.
+- The opt-in A16 fallback logs the NVN and Metal ASTC sparse-tile dimensions
+  (first 12 affected textures) without allocating an incompatible texture.
+  This diagnostic requires an A16 run to capture actual Metal tile sizes.
 - Experimental `DM_NVN_BC_RGBA=1` opt-in for devices without BC support:
   `pkg_upload_` deswizzles and decodes ordinary, non-sparse BC1–BC5/BC7
   packaged textures into RGBA8 Metal textures. It is a stepping stone for
