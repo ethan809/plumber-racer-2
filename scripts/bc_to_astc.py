@@ -8,7 +8,6 @@ Requires a C compiler and ARM's `astcenc` command-line encoder in PATH.
 
 import argparse
 import ctypes
-import os
 from pathlib import Path
 import shutil
 import struct
