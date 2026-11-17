@@ -22,6 +22,7 @@
 #include "../tex/nvn_fmt_mtl.h"
 #include "../tex/nvn_deswizzle.h"
 #include "../tex/nvn_deswizzle_gpu.h"
+#include "../tex/nvn_bc_decode.h"
 #include "nvn_builtin.h"
 #include "host_msl.h"
 #include "nvn_dirty.h"
@@ -82,6 +83,33 @@ static int g_warm_started;
 static void warm_claim(void);
 
 static id<MTLDevice> g_dev;
+// Experimental, opt-in bridge for pre-existing BC assets on Apple GPUs without
+// BC support. RGBA8 is a temporary target; ASTC encoding is not yet integrated.
+static int bc_cpu_fallback(void) {
+    static int enabled = -1;
+    if (enabled < 0) { const char *s = getenv("DM_NVN_BC_RGBA"); enabled = s && !strcmp(s, "1"); }
+    return enabled && g_dev && !g_dev.supportsBCTextureCompression;
+}
+// Return the BC block family and normalized signedness for a Metal format.
+// BC6H is deliberately excluded: its HDR pixels cannot be represented in RGBA8.
+static int bc_rgba_kind(MTLPixelFormat pf, int *sign) {
+    *sign = 0;
+    switch (pf) {
+        case MTLPixelFormatBC1_RGBA: case MTLPixelFormatBC1_RGBA_sRGB: return 1;
+        case MTLPixelFormatBC2_RGBA: case MTLPixelFormatBC2_RGBA_sRGB: return 2;
+        case MTLPixelFormatBC3_RGBA: case MTLPixelFormatBC3_RGBA_sRGB: return 3;
+        case MTLPixelFormatBC4_RSnorm: *sign = 1; return 4;
+        case MTLPixelFormatBC4_RUnorm: return 4;
+        case MTLPixelFormatBC5_RGSnorm: *sign = 1; return 5;
+        case MTLPixelFormatBC5_RGUnorm: return 5;
+        case MTLPixelFormatBC7_RGBAUnorm: case MTLPixelFormatBC7_RGBAUnorm_sRGB: return 7;
+        default: return 0;
+    }
+}
+static int bc_rgba_srgb(MTLPixelFormat pf) {
+    return pf == MTLPixelFormatBC1_RGBA_sRGB || pf == MTLPixelFormatBC2_RGBA_sRGB ||
+           pf == MTLPixelFormatBC3_RGBA_sRGB || pf == MTLPixelFormatBC7_RGBAUnorm_sRGB;
+}
 // The shaders the host writes itself (built-in kernels, clears, copies, index conversions, geometry packing, the present: dm/gfx/msl), compiled when the host is built and loaded by
 // name (host_msl_lib), so none is compiled at run time. The diagnostic overrides (DM_NVN_HILITE, DM_NVN_MAGSCAN, DM_NVN_TEXDUMP) still compile theirs from source
 static id<MTLLibrary> host_lib(const char *name, NSError **e) { return host_msl_lib(g_dev, nil, name, e); }
@@ -429,7 +457,8 @@ void mtl_init(void) {
     }
     // BC textures are created and uploaded as BC, with no decompression path (dm/gfx/tex/README.md); without BC the first one aborts in Metal's descriptor validation mid-game
     // (GitHub issue #704: an iPhone 15, A16). The iOS front end refuses such a device before the launcher (main.m); this stops every other route at the device, with the reason
-    if (!g_dev.supportsBCTextureCompression) MDIE("the Metal device %s has no BC texture formats, which the games' textures use and the host does not decompress: an iPhone needs an A17 Pro or later, an iPad an M1 or later", g_dev.name.UTF8String);
+    if (!g_dev.supportsBCTextureCompression && !bc_cpu_fallback()) MDIE("the Metal device %s has no BC texture formats, which the games' textures use and the host does not decompress: an iPhone needs an A17 Pro or later, an iPad an M1 or later", g_dev.name.UTF8String);
+    if (bc_cpu_fallback()) MLOG("[RED] experimental BC-to-RGBA bridge enabled: no sparse/BC6H support, high GPU memory use, gameplay NOT validated");
     [g_q addResidencySet:g_res];
     [g_q4 addResidencySet:g_res];
     { void crash_set_wait_dump(void (*fn)(void)); void mtl_wait_state_dump(void); crash_set_wait_dump(mtl_wait_state_dump); }
@@ -1742,7 +1771,7 @@ void mtl_drain(void) { present_drop_for_suspend(); mtl_present_flush(); snap_dra
 
 // ================= Render replay =================
 #include "../../host/front.h"
-static int g_red_once[148];
+static int g_red_once[162];
 #define RED_ONCE(k, ...) do { if (!g_red_once[k]++) MLOG("[RED] " __VA_ARGS__); } while (0)
 // NVN vertex streams 0–15 → Metal vertex buffer slots: 0–13 go to 16–29 (30 is the constant fallback buffer), 14 and 15 to 14 and 15. Metal has only the 31 slots 0–30; translated shaders use only buffer(0) (the argument buffer),
 // and the host's own vertex functions read no vertex buffers. 13 Sentinels uses stream 15, and the old 16 + stream went out of range (Metal assertion: buffer index (31) must be < 31)
@@ -2097,6 +2126,9 @@ static int tex_soft_level(const tex_t *t, unsigned *level) { if (!t || !tex_soft
 static MTLTextureDescriptor *tex_desc(const tex_t *t, int packaged) {
     uint32_t pf = 0; uint8_t swz[4];
     if (!nvn_fmt_to_mtl(t->d.format, &pf, swz) || !pf) { RED_ONCE(0, "texture format %#x has no Metal equivalent (first case)", t->d.format); return nil; }
+    int signed_bc = 0;
+    if (packaged && bc_cpu_fallback() && bc_rgba_kind((MTLPixelFormat)pf, &signed_bc))
+        pf = bc_rgba_srgb((MTLPixelFormat)pf) ? MTLPixelFormatRGBA8Unorm_sRGB : MTLPixelFormatRGBA8Unorm;
     // Metal's limits: 16384 in 2D, 2048 in 3D, 2048 array layers; beyond them Metal aborts the process on an assertion, so they are caught here with a red line
     if (t->d.width > 16384 || t->d.height > 16384 || t->d.depth > 2048) { RED_ONCE(71, "texture size exceeds Metal limits: %u×%u×%u levels %u format %#x target %d (first case ser=%llu)", t->d.width, t->d.height, t->d.depth, t->d.levels, t->d.format, t->d.target, (unsigned long long)t->serial); return nil; }
     MTLTextureDescriptor *d = [MTLTextureDescriptor new];
@@ -2763,6 +2795,20 @@ static id<MTLTexture> sparse_upload(const tex_t *t, uint64_t *stamp, MTLTextureU
 }
 
 static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture> reuse, MTLTextureUsage keep) {
+    uint32_t guest_pf = 0; uint8_t guest_swz[4]; int bc_signed = 0;
+    nvn_fmt_to_mtl(t->d.format, &guest_pf, guest_swz);
+    int bc_kind = bc_cpu_fallback() ? bc_rgba_kind((MTLPixelFormat)guest_pf, &bc_signed) : 0;
+    if (bc_kind && t->d.target == 2) {
+        RED_ONCE(160, "BC fallback does not support 3D textures (format %#x)", t->d.format);
+        return nil;
+    }
+    // A sparse BC texture needs a per-tile decode/cache architecture. Do not
+    // accidentally allocate it as RGBA8: a virtual 8192x8192x68 array would
+    // take tens of gigabytes and kill the app before a useful log was written.
+    if (bc_kind && t->pool && nvn_sparse_pool(t->pool)) {
+        RED_ONCE(159, "BC fallback has no sparse texture support (format %#x, %ux%ux%u)", t->d.format, t->d.width, t->d.height, t->d.depth);
+        return nil;
+    }
     { id<MTLTexture> s = sparse_upload(t, stamp, keep, 0); if (s) return s; }   // a large texture of a sparse pool: only its mapped tiles take memory
     MTLTextureDescriptor *d = tex_desc(t, 1);
     if (!d) return nil;
@@ -2771,7 +2817,7 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
     // On the CPU while its pool has no zero-copy buffer: the GPU's upload would give it one (mtl_addr), and iOS reads a buffer's whole pool into memory and wires it, for a pool the GPU may otherwise never address
     int keep_cpu = (pst_eligible(t) || DM_GAME_TEX_SOFT) && t->has_layout && !mtl_pool_wrapped(t->mem, t->L.size);
     unsigned sk = tex_soft(t) ? 1 : 0;   // source level = host level + sk
-    int direct = !sk && !keep_cpu && !rb_shift && stamp && direct_upload_on() && g_nvn_deswz_gpu && !(t->pool && nvn_sparse_pool(t->pool)) && nvn_deswz_gpu_direct_supported(&t->d);
+    int direct = !bc_kind && !sk && !keep_cpu && !rb_shift && stamp && direct_upload_on() && g_nvn_deswz_gpu && !(t->pool && nvn_sparse_pool(t->pool)) && nvn_deswz_gpu_direct_supported(&t->d);
     if (direct) d.usage |= MTLTextureUsageShaderWrite | MTLTextureUsagePixelFormatView;
     id<MTLTexture> mt = reuse && reuse.pixelFormat == d.pixelFormat && reuse.width == d.width && reuse.height == d.height && reuse.mipmapLevelCount == d.mipmapLevelCount && reuse.textureType == d.textureType
                         && (reuse.usage & d.usage) == d.usage
@@ -2789,11 +2835,11 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
     size_t total = 0;
     for (unsigned l = 0; l < d.mipmapLevelCount; l++) {
         uint32_t w = MAX(t->d.width >> (l + sk), 1u), h = MAX(t->d.height >> (l + sk), 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
-        total += (size_t)((w + bw - 1) / bw) * bpb * ((h + bh - 1) / bh) * z * layers;
+        total += (bc_kind ? (size_t)w * h * 4 : (size_t)((w + bw - 1) / bw) * bpb * ((h + bh - 1) / bh)) * z * layers;
     }
     g_bp_up_bytes += total;
     void *mb; uint64_t mo;
-    int use_gpu = !keep_cpu && !rb_shift && !sparse && g_nvn_deswz_gpu && mtl_addr((uint64_t)t->mem, t->L.size, &mb, &mo);   // a sparse pool's texture is gathered through its page table on the CPU
+    int use_gpu = !bc_kind && !keep_cpu && !rb_shift && !sparse && g_nvn_deswz_gpu && mtl_addr((uint64_t)t->mem, t->L.size, &mb, &mo);   // a sparse pool's texture is gathered through its page table on the CPU
     if (g_nvn_deswz_gpu && !use_gpu && !sparse && !rb_shift && !keep_cpu) RED_ONCE(40, "swizzled texture storage is not in a memory pool; falling back to the CPU");
     if (use_gpu) {
         // The GPU reads the memory pool at execution time, which is closer to a real Switch than a snapshot at CPU upload time; the dirty-page stamp is still taken before encoding, and later writes still trigger a re-upload.
@@ -2848,10 +2894,30 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
     res_add(stg); [g_up_keep addObject:stg];
     size_t off = 0;
     int zb = zblock_on() && t->d.format >= 0x79 && t->d.format <= 0x94; if (zb) { g_zb_ser = t->serial; g_zb_n = (int)MIN(d.mipmapLevelCount, 16u); memset(g_zb, 0, sizeof g_zb); memset(g_zb_tot, 0, sizeof g_zb_tot); }
+    uint8_t *bc_linear = NULL; size_t bc_linear_cap = 0;
     for (unsigned l = 0; l < d.mipmapLevelCount; l++) {
         uint32_t w = MAX(t->d.width >> (l + sk), 1u), h = MAX(t->d.height >> (l + sk), 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
         size_t pitch = (size_t)((w + bw - 1) / bw) * bpb, rows = (h + bh - 1) / bh;
         for (unsigned y = 0; y < layers; y++) {
+            if (bc_kind) {
+                // Decode after deswizzling, keeping the game's compressed
+                // guest storage untouched. Only the Metal allocation differs.
+                size_t compressed_size = pitch * rows, rgba_size = (size_t)w * h * 4;
+                if (compressed_size > bc_linear_cap) {
+                    uint8_t *next = realloc(bc_linear, compressed_size);
+                    if (!next) MDIE("BC fallback staging allocation failed (%zu bytes)", compressed_size);
+                    bc_linear = next; bc_linear_cap = compressed_size;
+                }
+                if (nvn_deswizzle(&t->d, l + sk, y, src, bc_linear, pitch) ||
+                    nvn_bc_decode_rgba8((unsigned)bc_kind, bc_signed, bc_linear, compressed_size,
+                                        w, h, (uint8_t *)stg.contents + off, rgba_size)) {
+                    RED_ONCE(161, "BC fallback failed to deswizzle/decode format %#x level %u", t->d.format, l + sk);
+                    memset((uint8_t *)stg.contents + off, 0, rgba_size);
+                }
+                up_blit_add(stg, off, (size_t)w * 4, rgba_size, MTLSizeMake(w, h, 1), mt, y, l);
+                off += rgba_size;
+                continue;
+            }
             if (nvn_deswizzle(&t->d, l + sk, y, src, (uint8_t *)stg.contents + off, pitch)) { RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
             if (rb_shift) rb_swap_rows((uint8_t *)stg.contents + off, pitch, rows, z, pitch, pitch * rows, rb_shift);
             if (zb && l < 16) { const uint64_t *q = (const uint64_t *)((const uint8_t *)stg.contents + off); size_t nb = pitch * rows * z / 16;
@@ -2861,6 +2927,7 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
             off += pitch * rows * z;
         }
     }
+    free(bc_linear);
     free(part);
     up_flush();
     return mt;

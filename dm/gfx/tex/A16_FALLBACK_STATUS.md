@@ -11,6 +11,11 @@ It does **not** yet make the game work on A16 devices.
 - Standalone tests for BC1, BC4, BC7, bounds, and unsupported formats.
 - `scripts/bc_to_astc.py` turns an individually extracted **linear** BC texture into
   raw ASTC 4x4 blocks using ARM's `astcenc` command. Tested on a BC1 red test block.
+- Experimental `DM_NVN_BC_RGBA=1` opt-in for devices without BC support:
+  `pkg_upload_` deswizzles and decodes ordinary, non-sparse BC1–BC5/BC7
+  packaged textures into RGBA8 Metal textures. It is a stepping stone for
+  correctness testing, **not** the desired ASTC path and not a playable port.
+  BC6H, 3D, sparse and certain non-packaged GPU-write paths are unsupported.
 
 ## Try the single-texture converter
 
@@ -36,15 +41,16 @@ dimensions, format and checksum so the host cannot associate the wrong blocks.
 2. Identify and extract compressed textures from the game's containers or capture
    their linearized blocks during a reference run. **No generic build-time
    extractor is implemented.** A game can create or update textures at runtime.
-3. Integrate an ASTC cache lookup into `pkg_upload_` and its sparse / CPU-write
-   paths. Keep the original guest BC layout, selecting ASTC Metal destinations
-   only when the matching converted texture exists.
+3. Replace the high-memory RGBA8 bridge with an ASTC cache lookup and conversion
+   in `pkg_upload_` and its sparse / CPU-write paths. Keep the original guest BC
+   layout, selecting ASTC Metal destinations only when matching converted blocks exist.
 4. Handle views, copies, sparse textures, dynamically updated BC textures,
    mipmaps, signed data and cache invalidation.
 5. Profile memory and conversion overhead on A16; ASTC 4x4 costs 16 bytes per
    4x4 block (same as BC7; twice BC1), plus staging/transient storage.
-6. Only then relax the `supportsBCTextureCompression` startup check and test
-   on an A16 device. No iOS binary has been compiled or tested.
+6. Test on an A16 device. `DM_NVN_BC_RGBA=1` now bypasses the BC startup
+   check experimentally; it must not be presented as validated compatibility.
+   No iOS binary has been compiled or tested.
 
 An A16 build is **not** possible merely by removing that check: Metal rejects unsupported
 BC pixel formats later during texture creation. Do not interpret this decoder as a playable port.
