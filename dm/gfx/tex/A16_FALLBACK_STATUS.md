@@ -11,6 +11,10 @@ It does **not** yet make the game work on A16 devices.
 - Standalone tests for BC1, BC4, BC7, bounds, and unsupported formats.
 - `scripts/bc_to_astc.py` turns an individually extracted **linear** BC texture into
   raw ASTC 4x4 blocks using ARM's `astcenc` command. Tested on a BC1 red test block.
+- Optional `--cache-dir` writes content-addressed ASTC output and JSON metadata,
+  including source SHA-256, format, dimensions and encoding options. A synthetic
+  256x256 BC7 tile (64 KiB) successfully converts to a 64 KiB ASTC tile; the
+  cache-hit path has been tested with `scripts/test_a16_astc_tile.py`.
 - Experimental `DM_NVN_BC_RGBA=1` opt-in for devices without BC support:
   `pkg_upload_` deswizzles and decodes ordinary, non-sparse BC1–BC5/BC7
   packaged textures into RGBA8 Metal textures. It is a stepping stone for
@@ -24,7 +28,7 @@ and make the executable available as `astcenc` (or pass its path with `--astcenc
 
 ```sh
 python3 scripts/bc_to_astc.py --input linear.bc7 --output linear.astcraw \
-  --width 1024 --height 1024 --format BC7 --srgb
+  --width 1024 --height 1024 --format BC7 --srgb --cache-dir astc-cache
 ```
 
 The input must be raw BC blocks in row-major order, **not** a Switch texture
@@ -34,6 +38,16 @@ uploading to an `MTLPixelFormatASTC_4x4_*` texture after integration. Any mip
 levels, array slices or cube faces need conversion separately. Preconversion
 should include a manifest tying each result to the source texture identity,
 dimensions, format and checksum so the host cannot associate the wrong blocks.
+The cache files produced here are **not** yet connected to game texture loading.
+This converter handles a *linear* tile; a 64 KiB sparse NVN page is generally
+swizzled, and the Metal sparse page shape may differ from NVN's. An equally
+sized ASTC byte stream is not proof that the page can be mapped unchanged.
+
+To check the 64 KiB BC7 tile conversion and content cache on a development host:
+
+```sh
+python3 scripts/test_a16_astc_tile.py --astcenc /path/to/astcenc
+```
 
 ## Required before enabling A16
 
@@ -50,7 +64,8 @@ dimensions, format and checksum so the host cannot associate the wrong blocks.
    4x4 block (same as BC7; twice BC1), plus staging/transient storage.
 6. Test on an A16 device. `DM_NVN_BC_RGBA=1` now bypasses the BC startup
    check experimentally; it must not be presented as validated compatibility.
-   No iOS binary has been compiled or tested.
+   The renderer file passed an ARM64 iOS Metal syntax check in GitHub Actions,
+   but no complete A16 iOS app has been built or tested.
 
 An A16 build is **not** possible merely by removing that check: Metal rejects unsupported
 BC pixel formats later during texture creation. Do not interpret this decoder as a playable port.
