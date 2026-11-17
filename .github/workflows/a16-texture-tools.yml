@@ -1,0 +1,31 @@
+name: A16 texture tools (experimental)
+
+on:
+  push:
+    paths:
+      - 'dm/gfx/tex/nvn_bc_decode.*'
+      - 'dm/gfx/tex/bcdec.h'
+      - 'dm/gfx/tex/tests/t_bc_decode.c'
+      - 'scripts/bc_to_astc.py'
+      - '.github/workflows/a16-texture-tools.yml'
+  pull_request:
+    paths:
+      - 'dm/gfx/tex/nvn_bc_decode.*'
+      - 'dm/gfx/tex/bcdec.h'
+      - 'dm/gfx/tex/tests/t_bc_decode.c'
+      - 'scripts/bc_to_astc.py'
+      - '.github/workflows/a16-texture-tools.yml'
+
+jobs:
+  decoder-smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test BC decoder
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror \
+            dm/gfx/tex/nvn_bc_decode.c dm/gfx/tex/tests/t_bc_decode.c \
+            -o /tmp/t_bc_decode
+          /tmp/t_bc_decode
+      - name: Check ASTC converter Python syntax
+        run: python3 -m py_compile scripts/bc_to_astc.py
