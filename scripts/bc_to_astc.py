@@ -2,7 +2,8 @@
 """Convert one *linear* BC1-5/BC7 texture to 4x4 ASTC blocks for Metal.
 
 Development helper, not a game asset converter: it does not understand Switch
-RomFS containers, tiled NVN layouts, sparse textures or game texture metadata.
+RomFS containers, sparse page mappings or game texture metadata. A single
+NVN block-linear tile can be deswizzled with --nvn-swizzled.
 Requires a C compiler and ARM's `astcenc` command-line encoder in PATH.
 """
 
@@ -34,6 +35,36 @@ def write_png(path: Path, rgba: bytes, width: int, height: int) -> None:
     path.write_bytes(header)
 
 
+def deswizzle_nvn(source: bytes, row_bytes: int, rows: int,
+                  block_height_log2: int, switch2: bool) -> bytes:
+    """Read one complete Tegra block-linear tile into linear byte rows.
+
+    Mirrors nvn_bl_offset in dm/gfx/tex/nvn_deswizzle.c. Does not handle mip
+    tails, offsets into the source, or the game's virtual-page mapping.
+    """
+    if not 0 <= block_height_log2 <= 5:
+        raise ValueError("NVN block height log2 must be between 0 and 5")
+    bh = 1 << block_height_log2
+    gobs_x = (row_bytes + 63) // 64
+    blocks_y = (rows + 8 * bh - 1) // (8 * bh)
+    storage_bytes = gobs_x * blocks_y * 512 * bh
+    if len(source) != storage_bytes:
+        raise ValueError(f"NVN tile needs {storage_bytes} swizzled bytes, got {len(source)}")
+    out = bytearray(row_bytes * rows)
+    for y in range(rows):
+        base = (y // (8 * bh)) * gobs_x * 512 * bh + ((y % (8 * bh)) // 8) * 512
+        if switch2:
+            yoff = (y % 8 // 4) * 128 + (y % 4 // 2) * 32 + (y % 2) * 16
+        else:
+            yoff = (y % 8 // 2) * 64 + (y % 2) * 16
+        for x in range(0, row_bytes, 16):
+            xoff = (x % 64 // 32) * 256 + (x % 32 // 16) * (64 if switch2 else 32)
+            pos = base + (x // 64) * 512 * bh + xoff + yoff
+            amount = min(16, row_bytes - x)
+            out[y * row_bytes + x:y * row_bytes + x + amount] = source[pos:pos + amount]
+    return bytes(out)
+
+
 def convert(args: argparse.Namespace) -> None:
     if not 1 <= args.width <= 16384 or not 1 <= args.height <= 16384:
         raise ValueError("width and height must be between 1 and 16384")
@@ -43,8 +74,11 @@ def convert(args: argparse.Namespace) -> None:
     bpb = 8 if bc in (1, 4) else 16
     expected = ((args.width + 3) // 4) * ((args.height + 3) // 4) * bpb
     source = args.input.read_bytes()
+    if args.nvn_swizzled:
+        source = deswizzle_nvn(source, ((args.width + 3) // 4) * bpb,
+                               (args.height + 3) // 4, args.block_height_log2, args.switch2)
     if len(source) != expected:
-        raise ValueError(f"expected {expected} BC bytes, got {len(source)}; input must be deswizzled")
+        raise ValueError(f"expected {expected} BC bytes, got {len(source)}")
     if args.signed and bc not in (4, 5):
         raise ValueError("--signed is only valid for BC4 and BC5")
     cache_key = hashlib.sha256(
@@ -126,6 +160,9 @@ def main() -> None:
     p.add_argument("--signed", action="store_true", help="BC4/BC5 channels are signed")
     p.add_argument("--astcenc", default="astcenc", help="ASTC encoder executable")
     p.add_argument("--cache-dir", type=Path, help="Store and reuse converted blocks by content hash")
+    p.add_argument("--nvn-swizzled", action="store_true", help="Input is one complete block-linear NVN tile")
+    p.add_argument("--block-height-log2", type=int, default=0, help="NVN GOB block height as log2 (0-5)")
+    p.add_argument("--switch2", action="store_true", help="Use Switch 2's GOB byte ordering")
     args = p.parse_args()
     try:
         convert(args)
