@@ -1,0 +1,118 @@
+name: A16 experimental unsigned IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      original_ipa_url:
+        description: 'Temporary read-only Google Drive file link to your own original IPA (do not commit game data)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select build tools
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_27.2.app/Contents/Developer
+          brew install xcodegen
+          python3 -m pip install --user --break-system-packages fonttools gdown
+      - name: Download owner's existing IPA
+        env:
+          SOURCE_URL: ${{ inputs.original_ipa_url }}
+        run: |
+          set -euo pipefail
+          python3 -m gdown --fuzzy --quiet "$SOURCE_URL" -O "$RUNNER_TEMP/original.ipa"
+          python3 - "$RUNNER_TEMP/original.ipa" <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              bad = z.testzip()
+              if bad: raise SystemExit(f'Invalid original IPA archive: {bad}')
+              required = {'Payload/DmIOS.app/DmIOS', 'Payload/DmIOS.app/romfs.id'}
+              names = set(z.namelist())
+              missing = required - names
+              if missing: raise SystemExit(f'Original IPA missing: {sorted(missing)}')
+              libs = [n for n in names if n.startswith('Payload/DmIOS.app/msl/') and n.endswith('.metallib')]
+              if not libs: raise SystemExit('Original IPA has no Metal shader libraries')
+              print(f'Original IPA verified; {len(libs)} Metal libraries')
+          PY
+      - name: Recover game modules and shader bundle
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/original"
+          python3 - "$RUNNER_TEMP/original.ipa" "$RUNNER_TEMP/original" <<'PY'
+          from pathlib import Path
+          import sys, zipfile
+          root = Path(sys.argv[2]); prefix = 'Payload/DmIOS.app/'
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              for member in z.infolist():
+                  if not member.filename.startswith(prefix): continue
+                  relative = member.filename[len(prefix):]
+                  if not (relative in ('DmIOS', 'romfs.id', 'Info.plist') or relative.startswith(('dm/', 'msl/'))): continue
+                  if not relative or member.is_dir(): continue
+                  out = root / relative
+                  if not out.resolve().is_relative_to(root.resolve()): raise SystemExit('unsafe archive path')
+                  out.parent.mkdir(parents=True, exist_ok=True)
+                  with z.open(member) as source, out.open('wb') as target:
+                      import shutil; shutil.copyfileobj(source, target)
+          PY
+          mkdir -p "$RUNNER_TEMP/patch"
+          python3 scripts/recover_ipa_modules.py "$RUNNER_TEMP/original/DmIOS" --out "$RUNNER_TEMP/patch" --modules main subsdk0 sdk
+          cp "$RUNNER_TEMP/original/dm/"*.fixups.tsv "$RUNNER_TEMP/patch/"
+          cp "$RUNNER_TEMP/original/dm/"*.gates.tsv "$RUNNER_TEMP/patch/"
+          cp "$RUNNER_TEMP/original/dm/"*.cuts.tsv "$RUNNER_TEMP/patch/"
+          cp "$RUNNER_TEMP/original/dm/"*.obs.tsv "$RUNNER_TEMP/patch/"
+          cp "$RUNNER_TEMP/original/dm/"*.tsv "$RUNNER_TEMP/patch/"
+          cp "$RUNNER_TEMP/original/dm/c1_full.tsv" dm/games/0400C3F00006E000/c1_full.tsv
+          cp "$RUNNER_TEMP/original/dm/cb_extent.tsv" dm/games/0400C3F00006E000/cb_extent.tsv
+          python3 scripts/check_recovered_ipa.py --info "$RUNNER_TEMP/original/Info.plist" --romfs-id "$RUNNER_TEMP/original/romfs.id" --patched "$RUNNER_TEMP/patch" --msl "$RUNNER_TEMP/original/msl" --chain-header dm/gfx/nvn/dmsh_chain.h || test "$?" -eq 2
+      - name: Build experimental A16 IPA
+        env:
+          GAME: 0400C3F00006E000
+          DM_COPY_ROMFS: 'NO'
+          DM_NVN_BC_RGBA: '1'
+          DM_EXPERIMENTAL_SHADER_REUSE: 'YES'
+          DM_NVN_SHADER_CHAIN: f0ce74641f84
+          DM_PSO_GPUS: none
+          DM_DISPLAY_NAME: Mario Kart World A16 Test
+          DM_APP_VERSION: '1.0'
+          AOC: ''
+        run: |
+          set -euo pipefail
+          export W="$RUNNER_TEMP/mkw-work"
+          export PATCHED="$RUNNER_TEMP/patch"
+          export ROMFS="$RUNNER_TEMP/missing-romfs.img"
+          export MSL_IOS="$RUNNER_TEMP/original/msl"
+          export STD_FONT="$RUNNER_TEMP/original/dm/font/standard.ttf"
+          export DM_ROMFS_ID_FILE="$RUNNER_TEMP/original/romfs.id"
+          export DM_ENV_FILE="$RUNNER_TEMP/a16-env.txt"
+          printf 'DM_NVN_BC_RGBA=1\n' > "$DM_ENV_FILE"
+          mkdir -p "$W"
+          mkdir -p "$W/data/v0"
+          python3 - "$W/data/v0/control.nacp" <<'PY'
+          from pathlib import Path
+          import struct, sys
+          nacp = bytearray(0x3100)
+          nacp[:len(b'Mario Kart World')] = b'Mario Kart World'
+          struct.pack_into('<I', nacp, 0x302C, 1)
+          nacp[0x3060:0x3063] = b'1.0'
+          Path(sys.argv[1]).write_bytes(nacp)
+          PY
+          bash dm/ios/tools/build_ipa.sh "$RUNNER_TEMP/MarioKartWorld-A16-experimental.ipa"
+      - name: Upload unsigned IPA (one-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MarioKartWorld-A16-experimental-unsigned
+          path: ${{ runner.temp }}/MarioKartWorld-A16-experimental.ipa
+          if-no-files-found: error
+          retention-days: 1
+      - name: Show build errors if unsuccessful
+        if: failure()
+        run: |
+          find "$RUNNER_TEMP" -path '*/pkg/build.log' -print -exec sh -c 'grep -E "error:|fatal error:" "$1" | head -40' sh {} \; || true
