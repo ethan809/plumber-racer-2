@@ -1,0 +1,33 @@
+name: Xbox recomp upstream source
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - experimental/a16-bc-rgba-renderer
+    paths:
+      - dm/xbox/RECOMP_INTEGRATION.md
+      - .github/workflows/xbox-recomp-source.yml
+jobs:
+  upstream-source:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned MIT-licensed mkw-recomp source
+        shell: pwsh
+        run: |
+          git clone --filter=blob:none https://github.com/adriadam10/mkw-recomp.git upstream-mkw-recomp
+          git -C upstream-mkw-recomp checkout dabf868ba437182b6f51bc14186114b288429588
+          if ($LASTEXITCODE -ne 0) { throw "Upstream checkout failed" }
+          git -C upstream-mkw-recomp rev-parse HEAD
+      - name: Preserve upstream source and license
+        uses: actions/upload-artifact@v4
+        with:
+          name: mkw-recomp-source-pinned
+          path: |
+            upstream-mkw-recomp/runtime/
+            upstream-mkw-recomp/recomp/
+            upstream-mkw-recomp/sm86/
+            upstream-mkw-recomp/tools/
+            upstream-mkw-recomp/LICENSE
+            upstream-mkw-recomp/README.md
+          retention-days: 7
