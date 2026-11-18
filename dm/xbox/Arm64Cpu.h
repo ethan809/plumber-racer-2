@@ -88,6 +88,24 @@ inline void step(Cpu& c, const Memory& m) {
             c.pc+signExtend(uint64_t((op>>5)&0x7FFFFu)<<2,21) : next;
         return;
     }
+    // ADR and ADRP: form PC-relative addresses used throughout guest modules.
+    if ((op & 0x1F000000u) == 0x10000000u) {
+        uint64_t imm=((uint64_t((op>>5)&0x7FFFFu)<<2)|((op>>29)&3));
+        int64_t displacement=signExtend(imm,21);
+        bool page=(op>>31)&1;
+        uint64_t value=page ? (c.pc&~uint64_t(4095))+(displacement<<12) :
+                              c.pc+displacement;
+        write(c,op&31,value,true);c.pc=next;return;
+    }
+    // TBZ/TBNZ: test individual register bits and branch.
+    if ((op & 0x7E000000u) == 0x36000000u) {
+        unsigned bit=((op>>31)&1)*32+((op>>19)&31);
+        bool set=(reg(c,op&31)>>bit)&1;
+        bool branchOnSet=(op>>24)&1;
+        c.pc=(set==branchOnSet) ?
+            c.pc+signExtend(uint64_t((op>>5)&0x3FFFu)<<2,16) : next;
+        return;
+    }
     // Unsigned-offset LDR/STR of 32/64-bit general-purpose registers.
     // Accesses are bounds-checked against the guest memory mapping.
     if ((op & 0xBFC00000u) == 0xB9000000u ||
