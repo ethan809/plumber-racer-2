@@ -21,7 +21,7 @@ struct Image {
     ~Image(){close();}
     void close(){if(file!=INVALID_HANDLE_VALUE){CloseHandle(file);file=INVALID_HANDLE_VALUE;} entries.clear();names.clear();}
     bool read(uint64_t offset,void* buffer,size_t length) {
-        if(file==INVALID_HANDLE_VALUE || length>std::numeric_limits<DWORD>::max()) return false;
+        if(file==INVALID_HANDLE_VALUE || length>0xFFFFFFFFull) return false;
         LARGE_INTEGER pos;pos.QuadPart=offset;
         if(!SetFilePointerEx(file,pos,nullptr,FILE_BEGIN))return false;
         DWORD got=0;
