@@ -2,12 +2,15 @@
 """Convert one *linear* BC1-5/BC7 texture to 4x4 ASTC blocks for Metal.
 
 Development helper, not a game asset converter: it does not understand Switch
-RomFS containers, tiled NVN layouts, sparse textures or game texture metadata.
+RomFS containers, sparse page mappings or game texture metadata. A single
+NVN block-linear tile can be deswizzled with --nvn-swizzled.
 Requires a C compiler and ARM's `astcenc` command-line encoder in PATH.
 """
 
 import argparse
 import ctypes
+import hashlib
+import json
 from pathlib import Path
 import shutil
 import struct
@@ -32,6 +35,36 @@ def write_png(path: Path, rgba: bytes, width: int, height: int) -> None:
     path.write_bytes(header)
 
 
+def deswizzle_nvn(source: bytes, row_bytes: int, rows: int,
+                  block_height_log2: int, switch2: bool) -> bytes:
+    """Read one complete Tegra block-linear tile into linear byte rows.
+
+    Mirrors nvn_bl_offset in dm/gfx/tex/nvn_deswizzle.c. Does not handle mip
+    tails, offsets into the source, or the game's virtual-page mapping.
+    """
+    if not 0 <= block_height_log2 <= 5:
+        raise ValueError("NVN block height log2 must be between 0 and 5")
+    bh = 1 << block_height_log2
+    gobs_x = (row_bytes + 63) // 64
+    blocks_y = (rows + 8 * bh - 1) // (8 * bh)
+    storage_bytes = gobs_x * blocks_y * 512 * bh
+    if len(source) != storage_bytes:
+        raise ValueError(f"NVN tile needs {storage_bytes} swizzled bytes, got {len(source)}")
+    out = bytearray(row_bytes * rows)
+    for y in range(rows):
+        base = (y // (8 * bh)) * gobs_x * 512 * bh + ((y % (8 * bh)) // 8) * 512
+        if switch2:
+            yoff = (y % 8 // 4) * 128 + (y % 4 // 2) * 32 + (y % 2) * 16
+        else:
+            yoff = (y % 8 // 2) * 64 + (y % 2) * 16
+        for x in range(0, row_bytes, 16):
+            xoff = (x % 64 // 32) * 256 + (x % 32 // 16) * (64 if switch2 else 32)
+            pos = base + (x // 64) * 512 * bh + xoff + yoff
+            amount = min(16, row_bytes - x)
+            out[y * row_bytes + x:y * row_bytes + x + amount] = source[pos:pos + amount]
+    return bytes(out)
+
+
 def convert(args: argparse.Namespace) -> None:
     if not 1 <= args.width <= 16384 or not 1 <= args.height <= 16384:
         raise ValueError("width and height must be between 1 and 16384")
@@ -41,8 +74,26 @@ def convert(args: argparse.Namespace) -> None:
     bpb = 8 if bc in (1, 4) else 16
     expected = ((args.width + 3) // 4) * ((args.height + 3) // 4) * bpb
     source = args.input.read_bytes()
+    if args.nvn_swizzled:
+        source = deswizzle_nvn(source, ((args.width + 3) // 4) * bpb,
+                               (args.height + 3) // 4, args.block_height_log2, args.switch2)
     if len(source) != expected:
-        raise ValueError(f"expected {expected} BC bytes, got {len(source)}; input must be deswizzled")
+        raise ValueError(f"expected {expected} BC bytes, got {len(source)}")
+    if args.signed and bc not in (4, 5):
+        raise ValueError("--signed is only valid for BC4 and BC5")
+    cache_key = hashlib.sha256(
+        json.dumps({"version": 1, "format": args.format, "width": args.width,
+                    "height": args.height, "signed": args.signed, "srgb": args.srgb,
+                    "quality": args.quality}, sort_keys=True).encode() + b"\0" + source
+    ).hexdigest()
+    cache_file = args.cache_dir / (cache_key + ".astcraw") if args.cache_dir else None
+    if cache_file is not None and cache_file.is_file():
+        cached = cache_file.read_bytes()
+        if len(cached) == expected_astc_size(args.width, args.height):
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_bytes(cached)
+            print(f"ASTC cache hit: {cache_key}: {args.output}")
+            return
     encoder = shutil.which(args.astcenc)
     if not encoder:
         raise FileNotFoundError("astcenc not found; install ARM astcenc and add it to PATH")
@@ -77,7 +128,19 @@ def convert(args: argparse.Namespace) -> None:
         if (w, h, depth) != (args.width, args.height, 1) or len(data) != 16 + expected_astc_size(w, h):
             raise ValueError("astcenc output dimensions or data size do not match input")
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_bytes(data[16:])  # raw ASTC blocks (no 16-byte file header)
+        raw_astc = data[16:]
+        args.output.write_bytes(raw_astc)  # raw ASTC blocks (no 16-byte file header)
+        if cache_file is not None:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_bytes(raw_astc)
+            cache_file.with_suffix(".json").write_text(json.dumps({
+                "source_sha256": hashlib.sha256(source).hexdigest(),
+                "cache_key": cache_key, "source_format": args.format,
+                "width": args.width, "height": args.height,
+                "signed": args.signed, "srgb": args.srgb,
+                "quality": args.quality, "astc_format": "ASTC_4x4",
+                "source_bytes": len(source), "astc_bytes": len(raw_astc),
+            }, indent=2) + "\n")
         print(f"{args.format} -> ASTC 4x4: {len(source)} -> {len(data)-16} bytes: {args.output}")
 
 
@@ -96,6 +159,10 @@ def main() -> None:
     p.add_argument("--srgb", action="store_true", help="Use sRGB ASTC colour encoding")
     p.add_argument("--signed", action="store_true", help="BC4/BC5 channels are signed")
     p.add_argument("--astcenc", default="astcenc", help="ASTC encoder executable")
+    p.add_argument("--cache-dir", type=Path, help="Store and reuse converted blocks by content hash")
+    p.add_argument("--nvn-swizzled", action="store_true", help="Input is one complete block-linear NVN tile")
+    p.add_argument("--block-height-log2", type=int, default=0, help="NVN GOB block height as log2 (0-5)")
+    p.add_argument("--switch2", action="store_true", help="Use Switch 2's GOB byte ordering")
     args = p.parse_args()
     try:
         convert(args)

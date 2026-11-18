@@ -7,6 +7,7 @@ on:
       - 'dm/gfx/tex/bcdec.h'
       - 'dm/gfx/tex/tests/t_bc_decode.c'
       - 'scripts/bc_to_astc.py'
+      - 'scripts/test_a16_astc_tile.py'
       - '.github/workflows/a16-texture-tools.yml'
   pull_request:
     paths:
@@ -14,6 +15,7 @@ on:
       - 'dm/gfx/tex/bcdec.h'
       - 'dm/gfx/tex/tests/t_bc_decode.c'
       - 'scripts/bc_to_astc.py'
+      - 'scripts/test_a16_astc_tile.py'
       - '.github/workflows/a16-texture-tools.yml'
 
 jobs:
@@ -28,4 +30,6 @@ jobs:
             -o /tmp/t_bc_decode
           /tmp/t_bc_decode
       - name: Check ASTC converter Python syntax
-        run: python3 -m py_compile scripts/bc_to_astc.py
+        run: python3 -m py_compile scripts/bc_to_astc.py scripts/test_a16_astc_tile.py
+      - name: Test Switch NVN tile permutations
+        run: python3 scripts/test_a16_astc_tile.py --swizzle-only

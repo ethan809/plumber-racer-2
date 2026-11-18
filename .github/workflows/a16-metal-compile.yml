@@ -1,0 +1,38 @@
+name: A16 Metal syntax (experimental)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'dm/gfx/nvn/nvn_mtl.m'
+      - 'dm/gfx/tex/nvn_bc_decode.*'
+      - 'dm/gfx/tex/bcdec.h'
+      - '.github/workflows/a16-metal-compile.yml'
+
+jobs:
+  syntax:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 27.2
+        run: sudo xcode-select -s /Applications/Xcode_27.2.app/Contents/Developer
+      - name: Generate Mario Kart World game profile header
+        run: |
+          mkdir -p dm/host/gen/0400C3F00006E000
+          python3 dm/games/game.py header 0400C3F00006E000 dm/host/gen/0400C3F00006E000/game_profile.h
+      - name: Syntax-check the NVN Metal backend
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang -fsyntax-only -x objective-c -fobjc-arc \
+            -target arm64-apple-ios26.0 -isysroot "$SDK" \
+            -Wno-unused-function \
+            -Idm/host -Idm/host/gen/0400C3F00006E000 \
+            -Idm/gfx/nvn/include -Idm/third_party/vulkan-headers/include \
+            -Idm/third_party/libvpx -Idm/third_party/dav1d/include \
+            dm/gfx/nvn/nvn_mtl.m
+      - name: Compile the portable BC decoder for iPhone
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang -c -O2 -target arm64-apple-ios26.0 \
+            -isysroot "$SDK" dm/gfx/tex/nvn_bc_decode.c -o /tmp/nvn_bc_decode.o
