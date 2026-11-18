@@ -19,6 +19,11 @@ jobs:
           git -C upstream-mkw-recomp checkout dabf868ba437182b6f51bc14186114b288429588
           if ($LASTEXITCODE -ne 0) { throw "Upstream checkout failed" }
           git -C upstream-mkw-recomp rev-parse HEAD
+      - name: Inventory UWP and Vulkan runtime compatibility
+        shell: pwsh
+        run: |
+          python dm/xbox/inventory_recomp.py upstream-mkw-recomp --output xbox-runtime-inventory.md
+          if ($LASTEXITCODE -ne 0) { throw "Runtime inventory failed" }
       - name: Preserve upstream source and license
         uses: actions/upload-artifact@v4
         with:
@@ -31,3 +36,9 @@ jobs:
             upstream-mkw-recomp/LICENSE
             upstream-mkw-recomp/README.md
           retention-days: 7
+      - name: Upload Xbox compatibility report
+        uses: actions/upload-artifact@v4
+        with:
+          name: xbox-runtime-inventory
+          path: xbox-runtime-inventory.md
+          retention-days: 14
