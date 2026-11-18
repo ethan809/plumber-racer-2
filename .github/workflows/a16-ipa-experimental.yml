@@ -110,7 +110,7 @@ jobs:
           export STD_FONT="$RUNNER_TEMP/original/dm/font/standard.ttf"
           export DM_ROMFS_ID_FILE="$RUNNER_TEMP/original/romfs.id"
           export DM_ENV_FILE="$RUNNER_TEMP/a16-env.txt"
-          printf 'DM_NVN_BC_RGBA=1\n' > "$DM_ENV_FILE"
+          printf 'DM_NVN_BC_RGBA=1\nDM_NVN_TEX_SOFT=1\nDM_NVN_CUT=16\nDM_NVN_PREFETCH=0\n' > "$DM_ENV_FILE"
           mkdir -p "$W"
           mkdir -p "$W/data/v0"
           python3 - "$W/data/v0/control.nacp" <<'PY'
