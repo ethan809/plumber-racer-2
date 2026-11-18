@@ -28,7 +28,7 @@ jobs:
           SOURCE_URL: ${{ inputs.original_ipa_url }}
         run: |
           set -euo pipefail
-          python3 -m gdown --fuzzy --quiet "$SOURCE_URL" -O "$RUNNER_TEMP/original.ipa"
+          python3 -m gdown --quiet "$SOURCE_URL" -O "$RUNNER_TEMP/original.ipa"
           python3 - "$RUNNER_TEMP/original.ipa" <<'PY'
           import sys, zipfile
           with zipfile.ZipFile(sys.argv[1]) as z:
