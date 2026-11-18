@@ -9,6 +9,7 @@
 #include <wrl/client.h>
 #include "D3D11Probe.cpp"
 #include "RomfsImageXbox.h"
+#include "RecompGameDump.h"
 #include <windows.storage.h>
 
 using namespace Windows::ApplicationModel::Core;
@@ -30,6 +31,7 @@ public:
         auto folder = Windows::Storage::ApplicationData::Current->LocalFolder->Path;
         std::wstring imagePath(folder->Data());
         imagePath += L"\\romfs.img";
+        XboxRecomp::log(XboxRecomp::discover(std::wstring(folder->Data())));
         if (gameImage.open(imagePath)) {
             OutputDebugStringA("Xbox game launcher: DMROMFS1 mounted.\\n");
             if (gameImage.find("System/Resource"))
