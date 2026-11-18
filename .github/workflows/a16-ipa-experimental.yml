@@ -88,35 +88,7 @@ jobs:
           cp "$RUNNER_TEMP/original/dm/cb_extent.tsv" dm/games/0400C3F00006E000/cb_extent.tsv
           python3 scripts/check_recovered_ipa.py --info "$RUNNER_TEMP/original/Info.plist" --romfs-id "$RUNNER_TEMP/original/romfs.id" --patched "$RUNNER_TEMP/patch" --msl "$RUNNER_TEMP/original/msl" --chain-header dm/gfx/nvn/dmsh_chain.h || test "$?" -eq 2
       - name: Patch unsupported BC textures on A16
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('dm/gfx/nvn/nvn_mtl.m')
-          s = p.read_text()
-          old = """    if (packaged && bc_cpu_fallback() && bc_rgba_kind((MTLPixelFormat)pf, &signed_bc))
-        pf = bc_rgba_srgb((MTLPixelFormat)pf) ? MTLPixelFormatRGBA8Unorm_sRGB : MTLPixelFormatRGBA8Unorm;"""
-          new = """    if (bc_cpu_fallback()) {
-        if (bc_rgba_kind((MTLPixelFormat)pf, &signed_bc)) {
-            // Only packaged textures are decoded by pkg_upload_.
-            // Reject non-packaged BC formats instead of giving Metal an unsupported format.
-            if (!packaged) {
-                RED_ONCE(161, "A16: unsupported non-packaged BC texture ser=%llu NVN format %#x Metal format %u; skipping",
-                         (unsigned long long)t->serial, t->d.format, pf);
-                return nil;
-            }
-            pf = bc_rgba_srgb((MTLPixelFormat)pf) ? MTLPixelFormatRGBA8Unorm_sRGB : MTLPixelFormatRGBA8Unorm;
-        } else if ((MTLPixelFormat)pf == MTLPixelFormatBC6H_RGBFloat ||
-                   (MTLPixelFormat)pf == MTLPixelFormatBC6H_RGBUfloat) {
-            RED_ONCE(162, "A16: BC6H texture ser=%llu NVN format %#x unsupported",
-                     (unsigned long long)t->serial, t->d.format);
-            return nil;
-        }
-    }"""
-          if s.count(old) != 1:
-              raise SystemExit('Expected renderer code not found exactly once; refusing unsafe patch')
-          p.write_text(s.replace(old, new, 1))
-          print('Applied A16 BC crash guard')
-          PY
+        run: python3 scripts/a16_bc_guard.py
       - name: Build experimental A16 IPA
         env:
           GAME: 0400C3F00006E000
