@@ -15,7 +15,9 @@
 #   Reused bytes are not checked against their CRC: damage inside the old IPA carries over. Use --no-reuse or delete <out.ipa>.idx to rebuild
 import argparse, collections, concurrent.futures as cf, ctypes, json, os, stat, struct, sys, time, zipfile, zlib
 
-LEVEL = 6
+LEVEL = int(os.environ.get('DM_IPA_ZIP_LEVEL', '6'))
+if not 0 <= LEVEL <= 9:
+    raise SystemExit('DM_IPA_ZIP_LEVEL must be 0 through 9')
 IDX_VERSION = 3
 BIG = 256 << 20      # files above this are streamed by the writer; smaller ones go through the pool
 WINDOW = 2 << 30     # input bytes in the pool at once
