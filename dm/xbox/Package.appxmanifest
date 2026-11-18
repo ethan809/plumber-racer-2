@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest" IgnorableNamespaces="uap mp">
   <Identity Name="PlumberRacerXbox.GraphicsProbe" Publisher="CN=PlumberRacerXbox" Version="1.0.0.0" ProcessorArchitecture="x64"/>
+  <mp:PhoneIdentity PhoneProductId="a711f95a-21f2-49f4-a51c-1023e847a995" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
   <Properties><DisplayName>Plumber Racer Xbox Graphics Probe</DisplayName><PublisherDisplayName>Experimental Port</PublisherDisplayName><Logo>Assets\Square150x150Logo.png</Logo></Properties>
   <Dependencies><TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0"/></Dependencies>
   <Resources><Resource Language="en-US"/></Resources>
