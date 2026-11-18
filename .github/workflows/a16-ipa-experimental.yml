@@ -1,4 +1,5 @@
 name: A16 experimental unsigned IPA
+# Retry texture view build with verified complete source blob.
 
 on:
   push:
