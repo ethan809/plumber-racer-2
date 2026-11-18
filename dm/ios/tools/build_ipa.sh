@@ -6,6 +6,7 @@
 # Usage: dm/ios/tools/build_ipa.sh [output.ipa | --prepare-xcode]; --prepare-xcode generates the project without building, signing or packing.
 #   Environment: GAME=game profile (dm/games/<base game title ID>, or one in DM_GAMES_DIR; required), W=the game's work folder (required: <NSP folder>/<title ID>-work, never the home folder), PATCHED / ROMFS / MSL_IOS can each be overridden
 #   DM_COPY_ROMFS=NO leaves the game files (RomFS) out of the IPA, as it does for the Xcode build phase: the package then stays small (a large game's full package can exceed what iOS extracts), and the app takes the files from Documents/romfs.img (scripts/push_romfs.sh); default: they are packed
+#   DM_ROMFS_ID_FILE=<existing romfs.id> with DM_COPY_ROMFS=NO allows a separate-data rebuild without the 20+ GB RomFS image on the build host. Only use an identity from the same game/version as the user's existing app.
 #   DM_ENTITLEMENTS=<plist> is the unsigned IPA's entitlements, signed ad-hoc into the executable (default: the profile's app.entitlements, else Increased Memory Limit; an empty string = none)
 #   AOC=add-on content directory (default $W/data/aoc; when it exists it goes to DmIOS.app/aoc/<index>/; an empty string = none), GFXAPI=nvn / vulkan (default: by the shader libraries in MSL_IOS)
 #   The app name is the game name in the base NSP's control data ($W/data/v0/control.nacp, else the one next to the RomFS), the app version is the display version in the packed game's control data (the one next to the RomFS:
@@ -54,7 +55,18 @@ if [ "$PREPARE_XCODE" = YES ]; then
 else DM_SCHEME_NAME=DmIOS; fi
 export DM_SCHEME_NAME
 for f in $MODS; do [ -f "$PATCHED/$f.patched.bin" ] && [ -f "$PATCHED/$f.fixups.tsv" ] || die "no rewritten module $PATCHED/$f (run dm/tools/patch_nso.py first)"; done
-python3 "$DM/tools/romfs.py" "$ROMFS" "$MARKER" || die "no RomFS at $ROMFS (missing $MARKER)"
+if [ -n "${DM_ROMFS_ID_FILE:-}" ] && [ "${DM_COPY_ROMFS:-YES}" = NO ]; then
+  [ -f "$DM_ROMFS_ID_FILE" ] || die "DM_ROMFS_ID_FILE does not exist: $DM_ROMFS_ID_FILE"
+  python3 - "$DM_ROMFS_ID_FILE" "$GAME" "$DM_APP_VERSION" "${PKG:-}" <<'PY' || die "invalid supplied RomFS identity"
+import re, sys
+line = open(sys.argv[1], encoding='ascii').read()
+expect = (f'DMROMFSID1 title={sys.argv[2]} version={sys.argv[3]} '
+          f'build={sys.argv[4]} ')
+assert line.startswith(expect) and re.fullmatch(r'size=[1-9][0-9]* index=[0-9a-f]{16}\n?', line[len(expect):]), 'RomFS identity game, version, package or checksum invalid'
+PY
+else
+  python3 "$DM/tools/romfs.py" "$ROMFS" "$MARKER" || die "no RomFS at $ROMFS (missing $MARKER)"
+fi
 V=$(sed -n 's/^#define DMSH_CHAIN "\(.*\)"/\1/p' "$DM/gfx/nvn/dmsh_chain.h")   # the chain version the host is compiled with, one for every game
 # A Vulkan game (Hades): the shaders are the game's SPIR-V, translated by dm/gfx/tools/vk_shaders.py into $MSL_IOS/vk; an OpenGL game (Digimon Story Cyber Sleuth): its GLSL, translated by
 # dm/gfx/tools/gl_shaders.py into $MSL_IOS/gl; neither has NVN chain libraries. GFXAPI=nvn / vulkan / gl says which (the NSP script passes what main imports); without it, the shader
@@ -188,7 +200,9 @@ if [ "${DM_COPY_ROMFS:-YES}" = NO ]; then
   t "no game files in the IPA (DM_COPY_ROMFS=NO): the app takes Documents/romfs.img (scripts/push_romfs.sh)"
   # The image's identity (dm/host/romfs_identity.h) goes into the app as romfs.id: main.m then uses only a Documents/romfs.img with the same size and index hash, and says so when it is another version or missing.
   # A RomFS folder has no image to name yet (push_romfs.sh packs it on the Mac), so such a build carries no identity and accepts any complete image
-  if [ -f "$ROMFS" ]; then
+  if [ -n "${DM_ROMFS_ID_FILE:-}" ]; then
+    MAPS=("$P/romfs.id=$DM_ROMFS_ID_FILE"); t "using supplied game files identity (no RomFS image on build host)"
+  elif [ -f "$ROMFS" ]; then
     mkdir -p "$O" && python3 -I "$DM/tools/romfs_image.py" --identity "$ROMFS" "$GAME" "$DM_APP_VERSION" "${PKG:-}" > "$O/romfs.id" || die "identity of $ROMFS"
     MAPS=("$P/romfs.id=$O/romfs.id"); t "game files identity: $(cat "$O/romfs.id")"
   fi
