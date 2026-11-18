@@ -30,6 +30,7 @@ def main():
     ios = Path(ios)
     paths = {
         'DM_RESOURCE_ROMFS': str(Path(romfs).resolve()),
+        'DM_RESOURCE_ROMFS_ID': str(Path(os.environ['DM_ROMFS_ID_FILE']).resolve()) if os.environ.get('DM_ROMFS_ID_FILE') else '',
         'DM_RESOURCE_MARKER': marker,
         'DM_RESOURCE_SHADERS': str(Path(shaders).resolve()),
         'DM_RESOURCE_MSLDIR': msldir,
