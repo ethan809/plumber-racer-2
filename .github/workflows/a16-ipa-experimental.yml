@@ -1,6 +1,9 @@
 name: A16 experimental unsigned IPA
 
 on:
+  push:
+    branches: [experimental/a16-bc-rgba-renderer]
+    paths: ['.github/workflows/a16-ipa-experimental.yml', 'dm/ios/Sources/main.m']
   workflow_dispatch:
     inputs:
       original_ipa_url:
@@ -10,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build:
@@ -26,9 +30,19 @@ jobs:
       - name: Download owner's existing IPA
         env:
           SOURCE_URL: ${{ inputs.original_ipa_url }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 -m gdown --quiet "$SOURCE_URL" -O "$RUNNER_TEMP/original.ipa"
+          if [ -n "$SOURCE_URL" ]; then
+            python3 -m gdown --quiet "$SOURCE_URL" -O "$RUNNER_TEMP/original.ipa"
+          else
+            # Reuse the previous successful private-input build's short-lived artifact.
+            # No game files or Google Drive link are written to the repository.
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14387891337/zip" > "$RUNNER_TEMP/previous-artifact.zip"
+            mkdir -p "$RUNNER_TEMP/previous-artifact"
+            unzip -q "$RUNNER_TEMP/previous-artifact.zip" -d "$RUNNER_TEMP/previous-artifact"
+            cp "$RUNNER_TEMP/previous-artifact/MarioKartWorld-A16-experimental.ipa" "$RUNNER_TEMP/original.ipa"
+          fi
           python3 - "$RUNNER_TEMP/original.ipa" <<'PY'
           import sys, zipfile
           with zipfile.ZipFile(sys.argv[1]) as z:
