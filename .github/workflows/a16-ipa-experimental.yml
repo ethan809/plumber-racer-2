@@ -4,7 +4,7 @@ name: A16 experimental unsigned IPA
 on:
   push:
     branches: [experimental/a16-bc-rgba-renderer]
-    paths: ['.github/workflows/a16-ipa-experimental.yml', 'dm/ios/Sources/main.m']
+    paths: ['.github/workflows/a16-ipa-experimental.yml', 'dm/ios/Sources/main.m', 'dm/games/settings.tsv', 'dm/games/settings.py']
   workflow_dispatch:
     inputs:
       original_ipa_url:
