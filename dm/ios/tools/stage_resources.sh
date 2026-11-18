@@ -24,7 +24,12 @@ DM_RESOURCE_PSO=${DM_RESOURCE_PSO:-}   # (a project prepared before the pipeline
 case "$DM_RESOURCE_MSLDIR" in b-*)
     [ -f "$DM_RESOURCE_CHAIN_H" ] || die "No chain version header: $DM_RESOURCE_CHAIN_H (a project prepared before the chain version moved to dm/gfx/nvn: prepare the game again, build_ipa_from_nsp.py --prepare-xcode)"
     V=$(sed -n 's/^#define DMSH_CHAIN "\(.*\)"/\1/p' "$DM_RESOURCE_CHAIN_H")
-    [ "$DM_RESOURCE_MSLDIR" = "b-$V" ] || die "The prepared shaders are chain $DM_RESOURCE_MSLDIR, the sources are now at b-$V: prepare the game again (build_ipa_from_nsp.py --prepare-xcode)";;
+    if [ -n "${DM_RESOURCE_EXPERIMENTAL_SHADER_CHAIN:-}" ]; then
+        [ "$DM_RESOURCE_MSLDIR" = "b-$DM_RESOURCE_EXPERIMENTAL_SHADER_CHAIN" ] || die "Experimental shader-chain selection and prepared libraries differ"
+        echo "[RED] Experimental shader reuse: host expects $V, prepared libraries use $DM_RESOURCE_EXPERIMENTAL_SHADER_CHAIN (untested)"
+    else
+        [ "$DM_RESOURCE_MSLDIR" = "b-$V" ] || die "The prepared shaders are chain $DM_RESOURCE_MSLDIR, the sources are now at b-$V: prepare the game again (build_ipa_from_nsp.py --prepare-xcode)"
+    fi;;
 esac
 echo 'Copy game resources (the first build copies the complete game; later builds sync changes)'
 mkdir -p "$APP/msl/$DM_RESOURCE_MSLDIR"
