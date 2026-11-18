@@ -1,0 +1,38 @@
+name: Xbox UWP graphics probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [experimental/a16-bc-rgba-renderer]
+    paths:
+      - 'dm/xbox/**'
+      - '.github/workflows/xbox-uwp-probe.yml'
+jobs:
+  package:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate required package logos
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          New-Item -ItemType Directory -Force dm/xbox/Assets | Out-Null
+          foreach ($item in @(@('Square44x44Logo',44,44),@('Square150x150Logo',150,150),@('Wide310x150Logo',310,150),@('SplashScreen',620,300))) {
+            $bmp = [System.Drawing.Bitmap]::new([int]$item[1],[int]$item[2])
+            $graphics = [System.Drawing.Graphics]::FromImage($bmp)
+            $graphics.Clear([System.Drawing.Color]::FromArgb(16,48,128))
+            $bmp.Save("dm/xbox/Assets/$($item[0]).png",[System.Drawing.Imaging.ImageFormat]::Png)
+            $graphics.Dispose(); $bmp.Dispose()
+          }
+      - name: Build unsigned x64 UWP package
+        shell: pwsh
+        run: |
+          $msbuild = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
+          if (-not $msbuild) { throw "MSBuild unavailable" }
+          & $msbuild dm/xbox/PlumberRacerXbox.vcxproj /restore /m /p:Configuration=Release /p:Platform=x64 /p:AppxBundle=Never /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxPackageSigningEnabled=false /p:AppxPackageDir="$PWD\xbox-package\"
+          if ($LASTEXITCODE -ne 0) { throw "UWP build failed" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Xbox-UWP-GraphicsProbe-unsigned
+          path: xbox-package/**
+          if-no-files-found: error
+          retention-days: 7
