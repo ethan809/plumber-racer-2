@@ -11,7 +11,11 @@ APP="${TARGET_BUILD_DIR:?}/${UNLOCALIZED_RESOURCES_FOLDER_PATH:?}"
 case "$APP" in /*.app) ;; *) die "Unexpected app resource destination: $APP";; esac
 # Validate every source before copying or removing anything (the external drive may be disconnected).
 resource_dm=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().parents[2])' "$0")
-python3 "$resource_dm/tools/romfs.py" "$DM_RESOURCE_ROMFS" "$DM_RESOURCE_MARKER" || die "Game files unavailable: $DM_RESOURCE_ROMFS/$DM_RESOURCE_MARKER"
+if [ "${DM_COPY_ROMFS:-YES}" = NO ] && [ -n "${DM_RESOURCE_ROMFS_ID:-}" ]; then
+    [ -f "$DM_RESOURCE_ROMFS_ID" ] || die "Supplied RomFS identity unavailable: $DM_RESOURCE_ROMFS_ID"
+else
+    python3 "$resource_dm/tools/romfs.py" "$DM_RESOURCE_ROMFS" "$DM_RESOURCE_MARKER" || die "Game files unavailable: $DM_RESOURCE_ROMFS/$DM_RESOURCE_MARKER"
+fi
 [ -d "$DM_RESOURCE_SHADERS" ] || die "Shader libraries unavailable: $DM_RESOURCE_SHADERS"
 [ -z "$DM_RESOURCE_AOC" ] || [ -d "$DM_RESOURCE_AOC" ] || die "Add-on content unavailable: $DM_RESOURCE_AOC"
 DM_RESOURCE_PSO=${DM_RESOURCE_PSO:-}   # (a project prepared before the pipeline archive has none)
@@ -28,7 +32,9 @@ mkdir -p "$APP/msl/$DM_RESOURCE_MSLDIR"
 if [ "${DM_COPY_ROMFS:-YES}" = NO ]; then
     rm -rf "$APP/romfs" "$APP/romfs.img" "$APP/romfs.id"
     # the image's identity (dm/host/romfs_identity.h): main.m uses only a Documents/romfs.img that matches it; a RomFS folder has none yet (push_romfs.sh packs it), so no identity is written for it
-    if [ -f "$DM_RESOURCE_ROMFS" ]; then
+    if [ -n "${DM_RESOURCE_ROMFS_ID:-}" ]; then
+        cp "$DM_RESOURCE_ROMFS_ID" "$APP/romfs.id" || die "copy supplied RomFS identity"
+    elif [ -f "$DM_RESOURCE_ROMFS" ]; then
         python3 -I "$resource_dm/tools/romfs_image.py" --identity "$DM_RESOURCE_ROMFS" "${DM_RESOURCE_TITLE:-}" "${DM_RESOURCE_VERSION:-}" "${DM_RESOURCE_BUILD:-}" > "$APP/romfs.id" || die "identity of $DM_RESOURCE_ROMFS"
     fi
 elif [ -f "$DM_RESOURCE_ROMFS" ]; then
