@@ -7,6 +7,8 @@
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
+#include <cstdio>
+#include <cmath>
 #include "D3D11Probe.cpp"
 #include "RomfsImageXbox.h"
 #include "RecompGameDump.h"
@@ -64,13 +66,45 @@ public:
         if (FAILED(chain->GetBuffer(0, IID_PPV_ARGS(&back)))) return;
         ComPtr<ID3D11RenderTargetView> rtv;
         if (FAILED(gfx.device->CreateRenderTargetView(back.Get(), nullptr, &rtv))) return;
-        const float blue[4] = {0.04f, 0.19f, 0.55f, 1.f};
+        // Present continuously and expose actual swap-chain frame progress.
+        // These are diagnostic frames, NOT Mario Kart World gameplay frames.
+        LARGE_INTEGER frequency = {}, last = {}, now = {};
+        QueryPerformanceFrequency(&frequency);
+        QueryPerformanceCounter(&last);
+        unsigned frames = 0;
+        double elapsed = 0.0;
         while (true) {
             window_->Dispatcher->ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
             gfx.context->OMSetRenderTargets(1, rtv.GetAddressOf(), nullptr);
-            gfx.context->ClearRenderTargetView(rtv.Get(), blue);
+            // A slowly changing background makes successful frame presentation
+            // visible even without a game graphics backend.
+            float phase = static_cast<float>((frames % 240) / 240.0);
+            const float diagnostic[4] = {
+                0.04f + phase * 0.12f, 0.13f, 0.38f + phase * 0.25f, 1.0f
+            };
+            gfx.context->ClearRenderTargetView(rtv.Get(), diagnostic);
             HRESULT hr = chain->Present(1, 0);
-            if (FAILED(hr)) break;
+            if (FAILED(hr)) {
+                OutputDebugStringA("Xbox D3D11 Present failed.\\n");
+                break;
+            }
+            ++frames;
+            QueryPerformanceCounter(&now);
+            if (frequency.QuadPart > 0) {
+                double delta = double(now.QuadPart - last.QuadPart) /
+                               double(frequency.QuadPart);
+                elapsed += delta;
+                last = now;
+                if (elapsed >= 1.0) {
+                    char message[128] = {};
+                    std::snprintf(message, sizeof(message),
+                        "Xbox D3D11 diagnostic: %u frames, %.1f FPS (not game frames)\\n",
+                        frames, double(frames) / elapsed);
+                    OutputDebugStringA(message);
+                    frames = 0;
+                    elapsed = 0.0;
+                }
+            }
         }
     }
 };
