@@ -123,6 +123,30 @@ jobs:
           Path(sys.argv[1]).write_bytes(nacp)
           PY
           bash dm/ios/tools/build_ipa.sh "$RUNNER_TEMP/MarioKartWorld-A16-experimental.ipa"
+      - name: Audit IPA size and largest bundled files
+        run: |
+          python3 - "$RUNNER_TEMP/original.ipa" "$RUNNER_TEMP/MarioKartWorld-A16-experimental.ipa" <<'PY'
+          import collections, os, sys, zipfile
+          for path in sys.argv[1:]:
+              print(f"\\nIPA SIZE AUDIT: {os.path.basename(path)} ({os.path.getsize(path)/1048576:.1f} MiB)")
+              with zipfile.ZipFile(path) as z:
+                  files = [i for i in z.infolist() if not i.is_dir()]
+                  groups = collections.defaultdict(lambda: [0, 0, 0])
+                  for i in files:
+                      relative = i.filename.removeprefix('Payload/DmIOS.app/')
+                      group = relative.split('/', 1)[0]
+                      row = groups[group]
+                      row[0] += i.compress_size
+                      row[1] += i.file_size
+                      row[2] += 1
+                  print("Bundle components (compressed MiB / raw MiB / files):")
+                  for group, (packed, raw, count) in sorted(groups.items(), key=lambda x: -x[1][0]):
+                      print(f"  {group:30} {packed/1048576:8.1f} / {raw/1048576:8.1f} / {count}")
+                  print("Largest individual files:")
+                  for i in sorted(files, key=lambda x: -x.compress_size)[:20]:
+                      print(f"  {i.compress_size/1048576:8.1f} MiB  {i.filename}")
+          print(f"\\nSIZE CHANGE: {(os.path.getsize(sys.argv[2])-os.path.getsize(sys.argv[1]))/1048576:+.1f} MiB")
+          PY
       - name: Upload unsigned IPA (one-day retention)
         uses: actions/upload-artifact@v4
         with:
