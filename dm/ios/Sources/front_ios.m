@@ -36,6 +36,9 @@ static UILabel *front_ios_fps_label(void);
         CAMetalLayer *l = (CAMetalLayer *)self.layer;
         l.device = MTLCreateSystemDefaultDevice(); l.pixelFormat = MTLPixelFormatBGRA8Unorm;
         l.contentsScale = UIScreen.mainScreen.nativeScale; l.framebufferOnly = NO; l.opaque = YES;
+        if (!getenv("DM_IOS_LOW_MEMORY") || atoi(getenv("DM_IOS_LOW_MEMORY"))) {
+            l.maximumDrawableCount = 2;
+        }
         self.backgroundColor = UIColor.blackColor;
     }
     return self;
@@ -79,6 +82,13 @@ static void launcher_done(void) { [g_root startGame]; }
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.blackColor;
     front_ios_power_watch();
+    [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        (void)n;
+        if (!getenv("DM_IOS_LOW_MEMORY") || atoi(getenv("DM_IOS_LOW_MEMORY"))) {
+            [[NSURLCache sharedURLCache] removeAllCachedResponses];
+            LOG("front end: low RAM mode cleared disposable URL cache after memory warning");
+        }
+    }];
     if (!front_ios_boot_ok()) {   // No game files: show a hint and do not start the host
         const char *why = front_ios_boot_message();
         [self showHint:why ? [NSString stringWithFormat:@"Game files unusable.\n%s", why] : @"Game files not found.\nPut the RomFS folder into this App's Documents as \"romfs\" (Files app), then restart."]; return;
