@@ -78,6 +78,52 @@ struct Image {
         if(next!=count){error="Incomplete RomFS directory tree";close();return false;}
         return true;
     }
+    // Stream one archived resource to an already-open destination. Avoids allocating
+    // the full game file in RAM; a 1 MiB transfer buffer supports large assets.
+    bool copyFile(const Entry& e, HANDLE destination) {
+        if (e.type != 1 || destination == INVALID_HANDLE_VALUE ||
+            file == INVALID_HANDLE_VALUE || e.a > indexOffset ||
+            e.b > indexOffset - e.a) {
+            error = "Invalid RomFS extraction request"; return false;
+        }
+        std::vector<uint8_t> chunk(1024 * 1024);
+        uint64_t offset = e.a, remaining = e.b;
+        while (remaining) {
+            DWORD n = static_cast<DWORD>(
+                remaining < chunk.size() ? remaining : chunk.size());
+            if (!read(offset, chunk.data(), n)) {
+                error = "Cannot read RomFS resource"; return false;
+            }
+            DWORD written = 0;
+            if (!WriteFile(destination, chunk.data(), n, &written, nullptr) ||
+                written != n) {
+                error = "Cannot write extracted resource"; return false;
+            }
+            offset += n;
+            remaining -= n;
+        }
+        return true;
+    }
+    // Extract a single user-owned resource into an existing writable folder.
+    // Caller supplies the destination path; never derive it from archive names.
+    bool extractFile(const std::string& archivePath,
+                     const std::wstring& destinationPath) {
+        const Entry* e = find(archivePath);
+        if (!e || e->type != 1) {
+            error = "RomFS resource not found"; return false;
+        }
+        CREATEFILE2_EXTENDED_PARAMETERS params = {sizeof(params)};
+        params.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+        HANDLE out = CreateFile2(destinationPath.c_str(), GENERIC_WRITE, 0,
+                                 CREATE_ALWAYS, &params);
+        if (out == INVALID_HANDLE_VALUE) {
+            error = "Cannot create extracted resource"; return false;
+        }
+        bool ok = copyFile(*e, out);
+        CloseHandle(out);
+        if (!ok) DeleteFileW(destinationPath.c_str());
+        return ok;
+    }
     // Returns an index entry by slash-separated UTF-8 path, or nullptr.
     const Entry* find(const std::string& path) const {
         if(entries.empty())return nullptr;
