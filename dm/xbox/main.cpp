@@ -57,7 +57,6 @@ ref class XboxFactory sealed : IFrameworkViewSource {
 public:
     virtual IFrameworkView^ CreateView() { return ref new XboxView(); }
 };
-[MTAThread]
 int main(Platform::Array<Platform::String^>^) {
     CoreApplication::Run(ref new XboxFactory());
     return 0;
