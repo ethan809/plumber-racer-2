@@ -15,9 +15,15 @@ struct Cpu {
     Stop stop = Stop::Running;
 };
 struct Memory {
-    const uint8_t* bytes = nullptr;
+    uint8_t* bytes = nullptr;
     size_t size = 0;
     uint64_t base = 0;
+    bool access(uint64_t addr, void* out, size_t len, bool store) const {
+        if (!bytes || addr < base || addr-base > size || len > size-static_cast<size_t>(addr-base)) return false;
+        if (store) std::memcpy(bytes+(addr-base),out,len);
+        else std::memcpy(out,bytes+(addr-base),len);
+        return true;
+    }
     bool fetch(uint64_t addr, uint32_t& out) const {
         if (!bytes || addr < base || (addr - base) > size ||
             size - static_cast<size_t>(addr - base) < 4) return false;
@@ -81,6 +87,21 @@ inline void step(Cpu& c, const Memory& m) {
         c.pc=(zero != nonzero) ?
             c.pc+signExtend(uint64_t((op>>5)&0x7FFFFu)<<2,21) : next;
         return;
+    }
+    // Unsigned-offset LDR/STR of 32/64-bit general-purpose registers.
+    // Accesses are bounds-checked against the guest memory mapping.
+    if ((op & 0xBFC00000u) == 0xB9000000u ||
+        (op & 0xBFC00000u) == 0xB9400000u ||
+        (op & 0xBFC00000u) == 0xF9000000u ||
+        (op & 0xBFC00000u) == 0xF9400000u) {
+        bool wide=(op>>30)&1, load=(op>>22)&1;
+        unsigned rn=(op>>5)&31, rt=op&31;
+        size_t width=wide?8:4;
+        uint64_t addr=(rn==31?c.sp:reg(c,rn))+uint64_t((op>>10)&0xFFFu)*width;
+        uint64_t value=load?0:reg(c,rt);
+        if (!m.access(addr,&value,width,!load)) { c.stop=Stop::OutOfBounds; return; }
+        if (load) write(c,rt,value,wide);
+        c.pc=next;return;
     }
     // MOVZ / MOVN / MOVK, wide immediate
     if ((op & 0x1F800000u) == 0x12800000u) {
