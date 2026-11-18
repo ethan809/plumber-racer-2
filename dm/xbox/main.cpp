@@ -8,6 +8,8 @@
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 #include "D3D11Probe.cpp"
+#include "RomfsImageXbox.h"
+#include <windows.storage.h>
 
 using namespace Windows::ApplicationModel::Core;
 using namespace Windows::UI::Core;
@@ -22,6 +24,23 @@ public:
     virtual void Uninitialize() {}
     virtual void Run() {
         window_->Activate();
+        // Load the same DMROMFS1 image accepted by the iOS IPA.
+        // Place romfs.img in this app's LocalFolder through Xbox Device Portal.
+        XboxRomfs::Image gameImage;
+        auto folder = Windows::Storage::ApplicationData::Current->LocalFolder->Path;
+        std::wstring imagePath(folder->Data());
+        imagePath += L"\\romfs.img";
+        if (gameImage.open(imagePath)) {
+            OutputDebugStringA("Xbox game launcher: DMROMFS1 mounted.\\n");
+            if (gameImage.find("System/Resource"))
+                OutputDebugStringA("Xbox game launcher: Mario RomFS marker found.\\n");
+            else
+                OutputDebugStringA("Xbox game launcher: Mario RomFS marker missing.\\n");
+        } else {
+            OutputDebugStringA("Xbox game launcher: ");
+            OutputDebugStringA(gameImage.error.c_str());
+            OutputDebugStringA("\\n");
+        }
         auto gfx = XboxProbe::CreateDevice();
         ComPtr<IDXGIDevice1> dxgiDevice;
         if (FAILED(gfx.device.As(&dxgiDevice))) return;
