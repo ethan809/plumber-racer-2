@@ -22,7 +22,7 @@ DM_PRESENT_UPSCALE	choice	off=Standard,metalfx=MetalFX	off	always	Game	Upscaling
 DM_LANG	choice	languages	build:DM_LANG	languages>1	Game	Game language		level=basic
 DM_FULLSCREEN	choice	0=Window,1=Fullscreen	0	platform:mac	Game	Display mode		level=basic
 DM_IOS_LOW_MEMORY	toggle	-	1	platform:ios	Performance	Low RAM mode	Keeps fewer Metal drawables and clears disposable caches on memory warnings.	level=basic
-DM_IOS_DISPLAY_SCALE	range	0.25:1.0:0.05	0.65	platform:ios	Performance	Display resolution	Scales the final Metal display pass to save GPU bandwidth and drawable RAM; lower values look softer.	level=basic
+DM_IOS_DISPLAY_SCALE	range	0.25:1.0:0.05	0.40	platform:ios	Performance	Display resolution	Scales the final Metal display pass to save GPU bandwidth and drawable RAM; lower values look softer.	level=basic
 DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	platform:ios	Game	Frame-rate counter
 DM_TOUCH_HAPTICS	toggle	-	0	platform:ios	Controls	Touch feedback
 DM_RUMBLE	toggle	-	0	always	Controls	Game rumble		level=basic
@@ -32,7 +32,7 @@ DM_PRESENT_SNAP	toggle	-	0	gfxapi:nvn	Performance	Frame buffering	Up to one fram
 DM_PSO_MTL4	toggle	-	DM_GAME_PSO_MTL4|1	gfxapi:nvn	Performance	Metal 4 pipelines	Keeps a pipeline archive; uses more memory.
 DM_PSO_PREBUILD	toggle	-	1	gfxapi:nvn	Performance	Pipeline prebuild	The first start waits a few minutes for it, once.	needs=DM_PSO_MTL4=1
 DM_NVN_ENC_THREAD	toggle	-	0|DM_GAME_ENC_THREAD	gfxapi:nvn	Performance	Encode thread
-DM_NVN_CUT	choice	8=Low GPU pressure,16=Balanced,32=Fewer submissions,64=Default	8	gfxapi:nvn	Performance	GPU submission size	Smaller segments may reduce memory pressure but add CPU overhead.
+DM_NVN_CUT	choice	8=Frequent segments,16=Balanced,32=Lower CPU overhead,64=Fewest segments	32	gfxapi:nvn	Performance	GPU submission size	Smaller segments may reduce memory pressure but add CPU overhead.
 DM_NVN_PREFETCH	toggle	-	0	gfxapi:nvn	Performance	Shader prefetch	Off reduces background shader loading work but may increase stutter.
 DM_NVN_TBDR	toggle	-	0	gfxapi:nvn	Performance	Tile render optimizations	Experimental; may help or hurt GPU performance.
 DM_NVN_GPU_TS	choice	submission=Per submission,segment=Per segment	submission	gfxapi:nvn	Performance	GPU timing detail	Per-segment timing adds diagnostic overhead.
