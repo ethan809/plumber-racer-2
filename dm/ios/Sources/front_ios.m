@@ -6,6 +6,7 @@
 #import <Metal/Metal.h>
 #import <AVFAudio/AVFAudio.h>
 #include <errno.h>
+#include <math.h>
 #include "front.h"
 #include "hle.h"
 #include "dm.h"
@@ -51,7 +52,17 @@ static UILabel *front_ios_fps_label(void);
 - (void)layoutSubviews {
     [super layoutSubviews];
     CAMetalLayer *l = (CAMetalLayer *)self.layer;
-    l.drawableSize = CGSizeMake(self.bounds.size.width * l.contentsScale, self.bounds.size.height * l.contentsScale);
+    // The game renders into its own swapchain. Reducing only the final Metal drawable
+    // saves display-pass bandwidth and transient drawable memory; iOS scales it to
+    // the view's native size. Round to even pixels and never allocate a zero-sized drawable.
+    const char *env = getenv("DM_IOS_DISPLAY_SCALE");
+    double scale = env && *env ? atof(env) : 0.65;
+    if (!isfinite(scale)) scale = 0.65;
+    scale = fmax(0.25, fmin(1.0, scale));
+    NSUInteger w = MAX(2, ((NSUInteger)ceil(self.bounds.size.width * l.contentsScale * scale) + 1) & ~(NSUInteger)1);
+    NSUInteger h = MAX(2, ((NSUInteger)ceil(self.bounds.size.height * l.contentsScale * scale) + 1) & ~(NSUInteger)1);
+    CGSize size = CGSizeMake(w, h);
+    if (!CGSizeEqualToSize(l.drawableSize, size)) l.drawableSize = size;
 }
 @end
 static CGRect fit_16_9(CGRect b) {   // the largest centered 16:9 rectangle in b
