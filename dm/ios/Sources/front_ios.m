@@ -59,6 +59,14 @@ static UILabel *front_ios_fps_label(void);
     double scale = env && *env ? atof(env) : 0.65;
     if (!isfinite(scale)) scale = 0.65;
     scale = fmax(0.25, fmin(1.0, scale));
+    // Thermal fallback: lower only the display pass, not the game's timing.
+    // This avoids extra GPU bandwidth when iOS reports sustained overheating.
+    switch (NSProcessInfo.processInfo.thermalState) {
+        case NSProcessInfoThermalStateSerious: scale *= 0.75; break;
+        case NSProcessInfoThermalStateCritical: scale *= 0.50; break;
+        default: break;
+    }
+    scale = fmax(0.25, scale);
     NSUInteger w = MAX(2, ((NSUInteger)ceil(self.bounds.size.width * l.contentsScale * scale) + 1) & ~(NSUInteger)1);
     NSUInteger h = MAX(2, ((NSUInteger)ceil(self.bounds.size.height * l.contentsScale * scale) + 1) & ~(NSUInteger)1);
     CGSize size = CGSizeMake(w, h);
@@ -93,6 +101,12 @@ static void launcher_done(void) { [g_root startGame]; }
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.blackColor;
     front_ios_power_watch();
+    [NSNotificationCenter.defaultCenter addObserverForName:NSProcessInfoThermalStateDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        (void)n;
+        // Only resize the drawable on the UI thread. The next present uses the
+        // new dimensions; no guest swapchain or game frame-rate change is needed.
+        [g_root.game setNeedsLayout];
+    }];
     [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         (void)n;
         if (!getenv("DM_IOS_LOW_MEMORY") || atoi(getenv("DM_IOS_LOW_MEMORY"))) {
