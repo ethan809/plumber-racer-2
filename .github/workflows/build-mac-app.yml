@@ -1,8 +1,8 @@
 name: Build Mario Kart World Mac app
 on:
   push:
-    paths:
-      - '.github/workflows/build-mac-app.yml'
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       source_run_id:
