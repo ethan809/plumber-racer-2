@@ -1,10 +1,14 @@
 name: Build Mario Kart World IPA from prior artifacts
 on:
+  push:
+    paths:
+      - '.github/workflows/build-from-prior-artifact.yml'
   workflow_dispatch:
     inputs:
       source_run_id:
         description: 'Previous Actions run ID containing a game dump artifact (not just an IPA)'
-        required: true
+        required: false
+        default: auto
         type: string
       source_artifact:
         description: 'Artifact name containing base/exefs and base/romfs'
@@ -20,10 +24,37 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Find previous game dump artifact
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_RUN: ${{ inputs.source_run_id }}
+          REQUESTED_ARTIFACT: ${{ steps.source.outputs.artifact }}
+        run: |
+          python3 - <<'PY'
+          import json,os,subprocess
+          repo=os.environ["GITHUB_REPOSITORY"]
+          requested=os.environ.get("REQUESTED_RUN","auto") or "auto"
+          preferred=os.environ.get("REQUESTED_ARTIFACT","game-dump") or "game-dump"
+          if requested!="auto":
+              run=requested
+              artifact=preferred
+          else:
+              data=json.loads(subprocess.check_output(["gh","api",f"repos/{repo}/actions/artifacts?per_page=100"],text=True))
+              candidates=[a for a in data.get("artifacts",[]) if not a.get("expired") and ("dump" in a["name"].lower() or "game" in a["name"].lower()) and "ipa" not in a["name"].lower()]
+              if not candidates:
+                  raise SystemExit("No unexpired game dump artifact found in the last 100 artifacts; existing IPA artifacts alone cannot rebuild the game.")
+              a=candidates[0]
+              run=str(a["workflow_run"]["id"])
+              artifact=a["name"]
+          with open(os.environ["GITHUB_OUTPUT"],"a") as f:
+              f.write(f"run_id={run}\nartifact={artifact}\n")
+          print(f"Selected run {run}, artifact {artifact}")
+          PY
       - name: Download previous artifact
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ inputs.source_run_id }}
+          RUN_ID: ${{ steps.source.outputs.run_id }}
           ARTIFACT: ${{ inputs.source_artifact }}
         run: |
           mkdir -p "$RUNNER_TEMP/game"
