@@ -22,6 +22,7 @@ DM_PRESENT_UPSCALE	choice	off=Standard,metalfx=MetalFX	off	always	Game	Upscaling
 DM_LANG	choice	languages	build:DM_LANG	languages>1	Game	Game language		level=basic
 DM_FULLSCREEN	choice	0=Window,1=Fullscreen	0	platform:mac	Game	Display mode		level=basic
 DM_IOS_LOW_MEMORY	toggle	-	1	platform:ios	Performance	Low RAM mode	Keeps fewer Metal drawables and clears disposable caches on memory warnings.	level=basic
+DM_IOS_DISPLAY_SCALE	range	0.25:1.0:0.05	0.65	platform:ios	Performance	Display resolution	Scales the final Metal display pass to save GPU bandwidth and drawable RAM; lower values look softer.	level=basic
 DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	platform:ios	Game	Frame-rate counter
 DM_TOUCH_HAPTICS	toggle	-	0	platform:ios	Controls	Touch feedback
 DM_RUMBLE	toggle	-	0	always	Controls	Game rumble		level=basic
