@@ -1,0 +1,86 @@
+name: Build Mario Kart World Mac app
+on:
+  push:
+    paths:
+      - '.github/workflows/build-mac-app.yml'
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Previous Actions run ID with game dump artifact, or auto'
+        required: false
+        default: auto
+        type: string
+      source_artifact:
+        description: 'Game dump artifact name, or auto'
+        required: false
+        default: auto
+        type: string
+permissions:
+  actions: read
+  contents: read
+jobs:
+  build-mac:
+    runs-on: macos-15-arm64
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate previous game dump
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_RUN: ${{ inputs.source_run_id }}
+          REQUESTED_ARTIFACT: ${{ inputs.source_artifact }}
+        run: |
+          python3 - <<'PY'
+          import json,os,subprocess
+          repo=os.environ["GITHUB_REPOSITORY"]
+          run=os.environ.get("REQUESTED_RUN") or "auto"
+          artifact=os.environ.get("REQUESTED_ARTIFACT") or "auto"
+          if run=="auto":
+              items=json.loads(subprocess.check_output(["gh","api",f"repos/{repo}/actions/artifacts?per_page=100"],text=True))["artifacts"]
+              matches=[a for a in items if not a["expired"] and ("dump" in a["name"].lower() or "game" in a["name"].lower()) and "ipa" not in a["name"].lower()]
+              if not matches: raise SystemExit("No game dump artifact found. A prior IPA alone is not sufficient for the native Mac build.")
+              selected=next((a for a in matches if a["name"]==artifact),matches[0]) if artifact!="auto" else matches[0]
+              run=str(selected["workflow_run"]["id"])
+              artifact=selected["name"]
+          elif artifact=="auto":
+              raise SystemExit("When providing a run ID, also provide its game dump artifact name.")
+          with open(os.environ["GITHUB_OUTPUT"],"a") as f:
+              f.write(f"run_id={run}\nartifact={artifact}\n")
+          print(f"Using artifact {artifact} from run {run}")
+          PY
+      - name: Download game dump
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.source.outputs.run_id }}
+          ARTIFACT: ${{ steps.source.outputs.artifact }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/game"
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT" --dir "$RUNNER_TEMP/game"
+      - name: Validate dump
+        run: |
+          test -f "$RUNNER_TEMP/game/base/exefs/main" || { echo "::error::Missing base/exefs/main"; exit 1; }
+          test -d "$RUNNER_TEMP/game/base/romfs" || { echo "::error::Missing base/romfs"; exit 1; }
+      - name: Install tools
+        run: |
+          xcodebuild -version
+          brew install xcodegen zstd glslang
+          brew install --cask dotnet-sdk || true
+          python3 -m pip install lz4 'capstone>=5,<6' fonttools nsz zbic
+      - name: Build native macOS app
+        run: |
+          python3 scripts/build_ipa_from_nsp.py "$RUNNER_TEMP/game" --platform mac-app
+      - name: Package app
+        run: |
+          APP="$RUNNER_TEMP/game/Mario Kart World.app"
+          if [ ! -d "$APP" ]; then
+            APP="$(find "$RUNNER_TEMP/game" -maxdepth 2 -name '*.app' -type d -print -quit)"
+          fi
+          test -n "$APP" && test -d "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/MarioKartWorld-Mac.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MarioKartWorld-Mac
+          path: ${{ runner.temp }}/MarioKartWorld-Mac.zip
+          if-no-files-found: error
+          retention-days: 7
