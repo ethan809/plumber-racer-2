@@ -4,7 +4,7 @@ name: A16 experimental unsigned IPA
 on:
   push:
     branches: [experimental/a16-bc-rgba-renderer]
-    paths: ['.github/workflows/a16-ipa-experimental.yml', 'dm/ios/Sources/main.m', 'dm/games/settings.tsv', 'dm/games/settings.py']
+    paths: ['.github/workflows/a16-ipa-experimental.yml', 'dm/ios/Sources/main.m', 'dm/ios/Sources/front_ios.m', 'dm/games/settings.tsv', 'dm/games/settings.py']
   workflow_dispatch:
     inputs:
       original_ipa_url:
@@ -39,7 +39,7 @@ jobs:
           else
             # Reuse the previous successful private-input build's short-lived artifact.
             # No game files or Google Drive link are written to the repository.
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14387891337/zip" > "$RUNNER_TEMP/previous-artifact.zip"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14472695858/zip" > "$RUNNER_TEMP/previous-artifact.zip"
             mkdir -p "$RUNNER_TEMP/previous-artifact"
             unzip -q "$RUNNER_TEMP/previous-artifact.zip" -d "$RUNNER_TEMP/previous-artifact"
             cp "$RUNNER_TEMP/previous-artifact/MarioKartWorld-A16-experimental.ipa" "$RUNNER_TEMP/original.ipa"
