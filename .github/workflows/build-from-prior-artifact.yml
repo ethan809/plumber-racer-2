@@ -1,0 +1,55 @@
+name: Build Mario Kart World IPA from prior artifacts
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Previous Actions run ID containing a game dump artifact (not just an IPA)'
+        required: true
+        type: string
+      source_artifact:
+        description: 'Artifact name containing base/exefs and base/romfs'
+        required: true
+        default: game-dump
+        type: string
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 180
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download previous artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT: ${{ inputs.source_artifact }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/game"
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT" --dir "$RUNNER_TEMP/game"
+      - name: Validate game dump
+        run: |
+          test -f "$RUNNER_TEMP/game/base/exefs/main" || { echo "::error::Artifact must contain base/exefs/main; an existing IPA alone cannot rebuild the game."; exit 1; }
+          test -d "$RUNNER_TEMP/game/base/romfs" || { echo "::error::Artifact must contain base/romfs"; exit 1; }
+      - name: Check build environment
+        run: |
+          xcodebuild -version
+          python3 --version
+          xcrun --find metal
+          command -v brew
+      - name: Install dependencies
+        run: |
+          brew install xcodegen zstd glslang
+          brew install --cask dotnet-sdk || true
+          python3 -m pip install --break-system-packages lz4 'capstone>=5,<6' fonttools nsz zbic
+      - name: Build unsigned IPA
+        run: |
+          python3 scripts/build_ipa_from_nsp.py "$RUNNER_TEMP/game" --platform ios --romfs separate
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: MarioKartWorld-iOS-unsigned
+          path: ${{ runner.temp }}/game/*.ipa
+          if-no-files-found: error
+          retention-days: 7
