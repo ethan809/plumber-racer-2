@@ -94,7 +94,8 @@ static void warm_claim(void);
 
 static id<MTLDevice> g_dev;
 // Experimental, opt-in bridge for pre-existing BC assets on Apple GPUs without
-// BC support. RGBA8 is a temporary target; ASTC encoding is not yet integrated.
+// BC support. BC4 -> R8 and BC5 -> RG8 preserve their existing decoded channels;
+// other kinds use RGBA8. ASTC encoding is not yet integrated.
 static int bc_cpu_fallback(void) {
     static int enabled = -1;
     if (enabled < 0) { const char *s = getenv("DM_NVN_BC_RGBA"); enabled = s && !strcmp(s, "1"); }
@@ -2138,8 +2139,12 @@ static MTLTextureDescriptor *tex_desc(const tex_t *t, int packaged) {
     uint32_t pf = 0; uint8_t swz[4];
     if (!nvn_fmt_to_mtl(t->d.format, &pf, swz) || !pf) { RED_ONCE(0, "texture format %#x has no Metal equivalent (first case)", t->d.format); return nil; }
     int signed_bc = 0;
-    if (packaged && bc_cpu_fallback() && bc_rgba_kind((MTLPixelFormat)pf, &signed_bc))
-        pf = bc_rgba_srgb((MTLPixelFormat)pf) ? MTLPixelFormatRGBA8Unorm_sRGB : MTLPixelFormatRGBA8Unorm;
+    if (packaged && bc_cpu_fallback()) {
+        int kind = bc_rgba_kind((MTLPixelFormat)pf, &signed_bc);
+        if (kind == 4) pf = MTLPixelFormatR8Unorm;
+        else if (kind == 5) pf = MTLPixelFormatRG8Unorm;
+        else if (kind) pf = bc_rgba_srgb((MTLPixelFormat)pf) ? MTLPixelFormatRGBA8Unorm_sRGB : MTLPixelFormatRGBA8Unorm;
+    }
     // Metal's limits: 16384 in 2D, 2048 in 3D, 2048 array layers; beyond them Metal aborts the process on an assertion, so they are caught here with a red line
     if (t->d.width > 16384 || t->d.height > 16384 || t->d.depth > 2048) { RED_ONCE(71, "texture size exceeds Metal limits: %u×%u×%u levels %u format %#x target %d (first case ser=%llu)", t->d.width, t->d.height, t->d.depth, t->d.levels, t->d.format, t->d.target, (unsigned long long)t->serial); return nil; }
     MTLTextureDescriptor *d = [MTLTextureDescriptor new];
@@ -2863,10 +2868,11 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
         if (sparse) nvn_sparse_protect(t->pool, (uint64_t)(uintptr_t)t->mem, t->L.size); else nvn_dirty_protect(t->mem, t->L.size); }
     int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
     unsigned layers = (t->d.target == 4 || t->d.target == 9) ? t->d.depth : t->d.target == 8 ? 6 : t->d.target == 3 ? t->d.height : 1;   // a cube array's depth counts layer-faces (tex_desc)
+    unsigned bc_components = bc_kind == 4 ? 1 : bc_kind == 5 ? 2 : 4;
     size_t total = 0;
     for (unsigned l = 0; l < d.mipmapLevelCount; l++) {
         uint32_t w = MAX(t->d.width >> (l + sk), 1u), h = MAX(t->d.height >> (l + sk), 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
-        total += (bc_kind ? (size_t)w * h * 4 : (size_t)((w + bw - 1) / bw) * bpb * ((h + bh - 1) / bh)) * z * layers;
+        total += (bc_kind ? (size_t)w * h * bc_components : (size_t)((w + bw - 1) / bw) * bpb * ((h + bh - 1) / bh)) * z * layers;
     }
     g_bp_up_bytes += total;
     void *mb; uint64_t mo;
@@ -2933,20 +2939,20 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
             if (bc_kind) {
                 // Decode after deswizzling, keeping the game's compressed
                 // guest storage untouched. Only the Metal allocation differs.
-                size_t compressed_size = pitch * rows, rgba_size = (size_t)w * h * 4;
+                size_t compressed_size = pitch * rows, pixel_size = (size_t)w * h * bc_components;
                 if (compressed_size > bc_linear_cap) {
                     uint8_t *next = realloc(bc_linear, compressed_size);
                     if (!next) MDIE("BC fallback staging allocation failed (%zu bytes)", compressed_size);
                     bc_linear = next; bc_linear_cap = compressed_size;
                 }
                 if (nvn_deswizzle(&t->d, l + sk, y, src, bc_linear, pitch) ||
-                    nvn_bc_decode_rgba8((unsigned)bc_kind, bc_signed, bc_linear, compressed_size,
-                                        w, h, (uint8_t *)stg.contents + off, rgba_size)) {
+                    nvn_bc_decode_tight((unsigned)bc_kind, bc_signed, bc_linear, compressed_size,
+                                        w, h, (uint8_t *)stg.contents + off, pixel_size)) {
                     RED_ONCE(161, "BC fallback failed to deswizzle/decode format %#x level %u", t->d.format, l + sk);
-                    memset((uint8_t *)stg.contents + off, 0, rgba_size);
+                    memset((uint8_t *)stg.contents + off, 0, pixel_size);
                 }
-                up_blit_add(stg, off, (size_t)w * 4, rgba_size, MTLSizeMake(w, h, 1), mt, y, l);
-                off += rgba_size;
+                up_blit_add(stg, off, (size_t)w * bc_components, pixel_size, MTLSizeMake(w, h, 1), mt, y, l);
+                off += pixel_size;
                 continue;
             }
             if (nvn_deswizzle(&t->d, l + sk, y, src, (uint8_t *)stg.contents + off, pitch)) { RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
@@ -5209,15 +5215,17 @@ static id<MTLTexture> tex_by_id(int tid) {   // Caller holds g_rmu
         if (!r.has_v) memset(&r.v, 0, sizeof r.v);
         uint32_t pf = view_pf ? view_pf : (uint32_t)base.pixelFormat;
         if (stv) pf = MTLPixelFormatX32_Stencil8;
-        // A BC image decoded to RGBA8 no longer has BC storage. Some games
+        // A BC image decoded to R8/RG8/RGBA8 no longer has BC storage. Some games
         // explicitly request a BC-format sampling view of that image; passing
         // the old BC format to Metal aborts on devices without BC support.
         // Keep the actual decoded texture's format (including its sRGB flag).
         int view_bc_sign = 0;
         if (bc_cpu_fallback() && bc_rgba_kind((MTLPixelFormat)pf, &view_bc_sign) &&
-            (base.pixelFormat == MTLPixelFormatRGBA8Unorm ||
+            (base.pixelFormat == MTLPixelFormatR8Unorm ||
+             base.pixelFormat == MTLPixelFormatRG8Unorm ||
+             base.pixelFormat == MTLPixelFormatRGBA8Unorm ||
              base.pixelFormat == MTLPixelFormatRGBA8Unorm_sRGB)) {
-            RED_ONCE(113, "BC texture view mapped to decoded RGBA8 storage (texture ID %d)", tid);
+            RED_ONCE(113, "BC texture view mapped to decoded R/RG/RGBA storage (texture ID %d)", tid);
             pf = (uint32_t)base.pixelFormat;
         }
         if (r.v.set_format && nvn_fmt_bc(rp->t.d.format) && !nvn_fmt_bc(r.v.format)) {   // the raw blocks of a BC texture through an uncompressed view (see rt_view_fmt): Metal has no such view

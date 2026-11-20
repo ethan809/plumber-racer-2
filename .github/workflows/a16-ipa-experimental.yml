@@ -4,7 +4,7 @@ name: A16 experimental unsigned IPA
 on:
   push:
     branches: [experimental/a16-bc-rgba-renderer]
-    paths: ['.github/workflows/a16-ipa-experimental.yml', 'dm/ios/tools/build_ipa.sh', 'dm/ios/Sources/main.m', 'dm/ios/Sources/front_ios.m', 'dm/games/settings.tsv', 'dm/games/settings.py']
+    paths: ['.github/workflows/a16-ipa-experimental.yml', 'dm/ios/tools/build_ipa.sh', 'dm/ios/Sources/main.m', 'dm/ios/Sources/front_ios.m', 'dm/games/settings.tsv', 'dm/games/settings.py', 'dm/gfx/nvn/nvn_mtl.m', 'dm/gfx/tex/**']
   workflow_dispatch:
     inputs:
       original_ipa_url:
@@ -37,10 +37,11 @@ jobs:
           if [ -n "$SOURCE_URL" ]; then
             python3 -m gdown --quiet "$SOURCE_URL" -O "$RUNNER_TEMP/original.ipa"
           else
-            # Reuse the owner's restored successful A16 build from workflow run 44214231637.
+            # Reuse the owner's latest confirmed A16 IPA. The original restored
+            # artifact expires sooner; this refreshed run remains available longer.
             # The stored source link and game files are never committed to this repository.
             mkdir -p "$RUNNER_TEMP/previous-artifact"
-            gh run download 44214231637 --repo "$GITHUB_REPOSITORY" \
+            gh run download 44815698611 --repo "$GITHUB_REPOSITORY" \
               --name MarioKartWorld-A16-experimental-unsigned \
               --dir "$RUNNER_TEMP/previous-artifact"
             cp "$RUNNER_TEMP/previous-artifact/MarioKartWorld-A16-experimental.ipa" "$RUNNER_TEMP/original.ipa"

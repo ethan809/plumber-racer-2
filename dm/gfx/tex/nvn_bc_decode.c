@@ -50,16 +50,17 @@ static void channel(const uint8_t *p, uint8_t out[16], int is_signed) {
     }
 }
 
-int nvn_bc_decode_rgba8(unsigned bc, int signed_channels,
-                        const uint8_t *blocks, size_t blocks_size,
-                        uint32_t width, uint32_t height,
-                        uint8_t *rgba, size_t rgba_size) {
-    if (bc < 1 || (bc > 5 && bc != 7) || !width || !height || !blocks || !rgba) return -1;
+static int decode(unsigned bc, int signed_channels,
+                  const uint8_t *blocks, size_t blocks_size,
+                  uint32_t width, uint32_t height,
+                  uint8_t *pixels, size_t pixels_size, unsigned components) {
+    if (bc < 1 || (bc > 5 && bc != 7) || !width || !height || !blocks || !pixels ||
+        (components != 4 && !(bc == 4 && components == 1) && !(bc == 5 && components == 2))) return -1;
     const size_t bw = ((size_t)width + 3) / 4, bh = ((size_t)height + 3) / 4;
     const size_t bytes = bc == 1 || bc == 4 ? 8 : 16;
     if (bw > SIZE_MAX / bh || bw * bh > SIZE_MAX / bytes ||
-        blocks_size < bw * bh * bytes || (size_t)width > SIZE_MAX / height / 4 ||
-        rgba_size < (size_t)width * height * 4) return -1;
+        blocks_size < bw * bh * bytes || (size_t)width > SIZE_MAX / height / components ||
+        pixels_size < (size_t)width * height * components) return -1;
     for (size_t by = 0; by < bh; by++) for (size_t bx = 0; bx < bw; bx++) {
         const uint8_t *p = blocks + (by * bw + bx) * bytes;
         uint8_t texels[16][4], x[16], y[16];
@@ -81,8 +82,24 @@ int nvn_bc_decode_rgba8(unsigned bc, int signed_channels,
         }
         for (unsigned iy = 0; iy < 4; iy++) for (unsigned ix = 0; ix < 4; ix++) {
             const size_t px = bx * 4 + ix, py = by * 4 + iy;
-            if (px < width && py < height) memcpy(rgba + (py * width + px) * 4, texels[iy * 4 + ix], 4);
+            if (px < width && py < height) memcpy(pixels + (py * width + px) * components, texels[iy * 4 + ix], components);
         }
     }
     return 0;
+}
+
+
+int nvn_bc_decode_rgba8(unsigned bc, int signed_channels,
+                        const uint8_t *blocks, size_t blocks_size,
+                        uint32_t width, uint32_t height,
+                        uint8_t *rgba, size_t rgba_size) {
+    return decode(bc, signed_channels, blocks, blocks_size, width, height, rgba, rgba_size, 4);
+}
+
+int nvn_bc_decode_tight(unsigned bc, int signed_channels,
+                        const uint8_t *blocks, size_t blocks_size,
+                        uint32_t width, uint32_t height,
+                        uint8_t *pixels, size_t pixels_size) {
+    unsigned components = bc == 4 ? 1 : bc == 5 ? 2 : 4;
+    return decode(bc, signed_channels, blocks, blocks_size, width, height, pixels, pixels_size, components);
 }
