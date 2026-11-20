@@ -2139,11 +2139,20 @@ static MTLTextureDescriptor *tex_desc(const tex_t *t, int packaged) {
     uint32_t pf = 0; uint8_t swz[4];
     if (!nvn_fmt_to_mtl(t->d.format, &pf, swz) || !pf) { RED_ONCE(0, "texture format %#x has no Metal equivalent (first case)", t->d.format); return nil; }
     int signed_bc = 0;
-    if (packaged && bc_cpu_fallback()) {
+    if (bc_cpu_fallback()) {
         int kind = bc_rgba_kind((MTLPixelFormat)pf, &signed_bc);
-        if (kind == 4) pf = MTLPixelFormatR8Unorm;
-        else if (kind == 5) pf = MTLPixelFormatRG8Unorm;
-        else if (kind) pf = bc_rgba_srgb((MTLPixelFormat)pf) ? MTLPixelFormatRGBA8Unorm_sRGB : MTLPixelFormatRGBA8Unorm;
+        if (kind) {
+            // A BC texture the game writes or views as raw compressed blocks
+            // cannot be emulated by the sampled, CPU-decoded fallback.
+            if (!packaged) { RED_ONCE(162, "BC fallback cannot allocate non-packaged format %#x", t->d.format); return nil; }
+            if (kind == 4) pf = MTLPixelFormatR8Unorm;
+            else if (kind == 5) pf = MTLPixelFormatRG8Unorm;
+            else pf = bc_rgba_srgb((MTLPixelFormat)pf) ? MTLPixelFormatRGBA8Unorm_sRGB : MTLPixelFormatRGBA8Unorm;
+        } else if ((MTLPixelFormat)pf == MTLPixelFormatBC6H_RGBFloat ||
+                   (MTLPixelFormat)pf == MTLPixelFormatBC6H_RGBUfloat) {
+            RED_ONCE(163, "BC fallback cannot decode HDR BC6H format %#x", t->d.format);
+            return nil;
+        }
     }
     // Metal's limits: 16384 in 2D, 2048 in 3D, 2048 array layers; beyond them Metal aborts the process on an assertion, so they are caught here with a red line
     if (t->d.width > 16384 || t->d.height > 16384 || t->d.depth > 2048) { RED_ONCE(71, "texture size exceeds Metal limits: %u×%u×%u levels %u format %#x target %d (first case ser=%llu)", t->d.width, t->d.height, t->d.depth, t->d.levels, t->d.format, t->d.target, (unsigned long long)t->serial); return nil; }
