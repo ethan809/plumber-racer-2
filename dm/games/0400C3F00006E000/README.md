@@ -57,6 +57,8 @@ A touch layout for racing (`pad_style kartworld`): a floating steering stick, ga
 
 Experimental A16 (iPhone 15) observation, 2026-11-20: a BC-to-RGBA build reached the world map after the player freed storage so `mem_file` could use a disk-backed mapping. This is not a validated race or Grand Prix run on A16. The world-map log measured frame-time p50 about 31–37 ms around frames 3000–4200 (GPU p50 22–35 ms), worsening to p50 70 ms and GPU p50 41 ms near frame 13200 with thermal state 2. Shader compilation was 0 ms in the late samples. `DM_RENDER_SCALE=0.01` was rejected by the loader (it accepts 0.5–1.0), leaving the game's original render scale. The experimental branch's launcher range was corrected; 0.5 is the next setting to measure. A16 still has no native BC compression support, and the conversion costs GPU memory.
 
+Later A16 report with render scale 0.50: menu frame time p50 16.6 ms for about 5,700 frames, then on entering the world-map gameplay frame 5955 took 7.1 seconds with only 1.5 ms submit and 6.9 ms GPU; its stall is in the game/CPU/asset-loading path, not a pipeline compilation (0 ms) or texture upload (0 MB) in that frame. Subsequent frames uploaded hundreds of textures, and sustained map gameplay reached GPU p50 30–43 ms with thermal state 2. The experimental iOS launcher offers an opt-in **A16 fast preset**: no pipeline prebuild, prefetch, Metal 4 or frame snapshots, lower display scale, with a separate encoder thread and 64-draw submission segments. These are not yet measured as faster on A16; compare a matched scene, and use Reset to tested defaults if picture or stability regresses.
+
 ## What it needs
 
 | Setting | Where | Why |

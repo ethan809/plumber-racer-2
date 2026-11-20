@@ -30,7 +30,7 @@ DM_RUMBLE_GAIN	range	0:3:0.1	1.0	always	Controls	Rumble strength		needs=DM_RUMBL
 DM_RUMBLE_MIN	range	0:0.9:0.05	0	always	Controls	Rumble cutoff
 DM_PRESENT_SNAP	toggle	-	0	gfxapi:nvn	Performance	Frame buffering	Up to one frame more display latency.
 DM_PSO_MTL4	toggle	-	DM_GAME_PSO_MTL4|1	gfxapi:nvn	Performance	Metal 4 pipelines	Keeps a pipeline archive; uses more memory.
-DM_PSO_PREBUILD	toggle	-	1	gfxapi:nvn	Performance	Pipeline prebuild	The first start waits a few minutes for it, once.	needs=DM_PSO_MTL4=1
+DM_PSO_PREBUILD	toggle	-	0	gfxapi:nvn	Performance	Pipeline prebuild	Build pipelines before the first game frame; slower first launch, fewer shader stalls later.	needs=DM_PSO_MTL4=1
 DM_NVN_ENC_THREAD	toggle	-	0|DM_GAME_ENC_THREAD	gfxapi:nvn	Performance	Encode thread
 DM_NVN_CUT	choice	8=Frequent segments,16=Balanced,32=Lower CPU overhead,64=Fewest segments	32	gfxapi:nvn	Performance	GPU submission size	Smaller segments may reduce memory pressure but add CPU overhead.
 DM_NVN_PREFETCH	toggle	-	0	gfxapi:nvn	Performance	Shader prefetch	Off reduces background shader loading work but may increase stutter.

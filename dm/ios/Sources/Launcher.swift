@@ -129,6 +129,13 @@ private struct LauncherView: View {
                     } footer: {
                         Text("Brings back all settings this game was tested with.")
                     }
+                    if ProcessInfo.processInfo.environment["DM_NVN_BC_RGBA"] == "1" {
+                        Section {
+                            Button("Apply A16 fast preset") { m.applyA16FastPreset() }
+                        } footer: {
+                            Text("Experimental: skips pipeline prebuild and extra frame buffering, uses a separate Metal encoding thread, and reduces display work. May increase stutter or affect stability. Reset to tested defaults to undo it.")
+                        }
+                    }
                     CloudSavesSection()
                     Section {
                         HStack {

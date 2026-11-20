@@ -93,6 +93,24 @@ final class LauncherModel: ObservableObject {
         fputs("launcher: settings reset to the game's defaults\n", stderr)
     }
 
+    // Experimental A16 BC conversion needs the smallest GPU working set we can give it.
+    // The player opts in on the launcher; every value is validated against the rows
+    // actually offered by this game, and explicit env-file settings remain fixed.
+    // The encode thread and longer GPU segments are experiments, not a promised FPS gain.
+    func applyA16FastPreset() {
+        let choices: [String: String] = [
+            "DM_RENDER_SCALE": "0.50", "DM_OPMODE": "0", "DM_PRESENT_UPSCALE": "off",
+            "DM_IOS_LOW_MEMORY": "1", "DM_IOS_DISPLAY_SCALE": "0.25",
+            "DM_PRESENT_SNAP": "0", "DM_PSO_MTL4": "0", "DM_PSO_PREBUILD": "0",
+            "DM_NVN_ENC_THREAD": "1", "DM_NVN_CUT": "64", "DM_NVN_PREFETCH": "0",
+            "DM_NVN_TBDR": "0", "DM_METAL_HUD": "0", "DM_TOUCH_HAPTICS": "0"
+        ]
+        for s in settings where !fixed.contains(s.env) {
+            if let v = choices[s.env], s.accepts(v) { values[s.env] = v }
+        }
+        fputs("launcher: experimental A16 fast preset selected\n", stderr)
+    }
+
     // Before the game starts: every setting not set by an env file goes into the environment (DM_LANG replaces the packed language main.m set as a default). Only a choice that
     // differs from the game's default is stored: a setting the player left at its default follows the defaults of a later build (the settings it was tested with)
     func apply() {
