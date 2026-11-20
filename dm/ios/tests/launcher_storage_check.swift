@@ -16,12 +16,12 @@ import Foundation
         setenv("DM_ENV_FILE_KEYS", "DM_METAL_HUD", 1); setenv("DM_METAL_HUD", "1", 1)   // set by Documents/env.txt
         let m = LauncherModel(file.settings, defaults: d)
         let scale = file.settings.first { $0.env == "DM_RENDER_SCALE" }!
-        expect(["nan", "inf", "-inf", "0.49", "1.01", "invalid", "0x1p-1", "0X1", " 0.75"].allSatisfy { !scale.accepts($0) } && scale.accepts("0.5") && scale.accepts("1.00"), "saved ranges reject nonfinite, out-of-range, hex and padded values, as launcher.c does")
+        expect(["nan", "inf", "-inf", "0.24", "1.01", "invalid", "0x1p-1", "0X1", " 0.75"].allSatisfy { !scale.accepts($0) } && scale.accepts("0.25") && scale.accepts("0.35") && scale.accepts("1.00"), "saved ranges reject nonfinite, out-of-range, hex and padded values, as launcher.c does")
         d.set("nan", forKey: "launcher.DM_RENDER_SCALE")
         expect(LauncherModel(file.settings, defaults: d).values["DM_RENDER_SCALE"] == scale.def, "an invalid saved range loads the default")
         expect(m.values["DM_FPS_TARGET"] == "30" && m.values["DM_PSO_MTL4"] == "0" && m.values["DM_FPS_HOLD"] == "on" && m.values["DM_METAL_HUD"] == "1", "stored choices and the env file are read")
         expect(m.changed, "Reset is offered with changed settings")
-        m.values["DM_RENDER_SCALE"] = "1.00"   // the slider's format of the default
+        m.values["DM_RENDER_SCALE"] = scale.def   // reset this changed choice to the iPhone's default
         m.apply()
         expect(d.string(forKey: "launcher.DM_PRESENT_SNAP") == nil, "a value equal to the default is not stored (and an old one is dropped)")
         expect(d.string(forKey: "launcher.DM_RENDER_SCALE") == nil && d.string(forKey: "launcher.DM_OPMODE") == nil && d.string(forKey: "launcher.DM_FPS_HOLD") == nil, "defaults are not stored")
@@ -31,7 +31,7 @@ import Foundation
         m.reset()
         expect(m.values["DM_PSO_MTL4"] == "1" && m.values["DM_FPS_TARGET"] == file.settings.first { $0.env == "DM_FPS_TARGET" }!.def, "Reset shows the defaults")
         m.applyA16FastPreset()
-        expect(m.values["DM_PSO_MTL4"] == "0" && m.values["DM_PSO_PREBUILD"] == "0" && m.values["DM_NVN_ENC_THREAD"] == "1" && m.values["DM_RENDER_SCALE"] == "0.50" && m.values["DM_METAL_HUD"] == "1", "A16 preset sets valid fast options but leaves env-file values fixed")
+        expect(m.values["DM_PSO_MTL4"] == "0" && m.values["DM_PSO_PREBUILD"] == "0" && m.values["DM_NVN_ENC_THREAD"] == "1" && m.values["DM_RENDER_SCALE"] == "0.30" && m.values["DM_METAL_HUD"] == "1", "A16 preset sets valid fast options but leaves env-file values fixed")
         m.reset()
         expect(d.string(forKey: "launcher.DM_PSO_MTL4") == "0" && d.string(forKey: "launcher.DM_FPS_TARGET") == "30", "Reset alone forgets nothing: Quit after it keeps the choices")
         expect(m.values["DM_METAL_HUD"] == "1" && !m.changed, "Reset leaves the env file's value; nothing left to reset")

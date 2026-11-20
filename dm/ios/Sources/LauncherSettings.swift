@@ -99,7 +99,7 @@ final class LauncherModel: ObservableObject {
     // The encode thread and longer GPU segments are experiments, not a promised FPS gain.
     func applyA16FastPreset() {
         let choices: [String: String] = [
-            "DM_RENDER_SCALE": "0.50", "DM_OPMODE": "0", "DM_PRESENT_UPSCALE": "off",
+            "DM_RENDER_SCALE": "0.30", "DM_OPMODE": "0", "DM_PRESENT_UPSCALE": "off",
             "DM_IOS_LOW_MEMORY": "1", "DM_IOS_DISPLAY_SCALE": "0.25",
             "DM_PRESENT_SNAP": "0", "DM_PSO_MTL4": "0", "DM_PSO_PREBUILD": "0",
             "DM_NVN_ENC_THREAD": "1", "DM_NVN_CUT": "64", "DM_NVN_PREFETCH": "0",

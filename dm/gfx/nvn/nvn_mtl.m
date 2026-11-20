@@ -101,6 +101,14 @@ static int bc_cpu_fallback(void) {
     if (enabled < 0) { const char *s = getenv("DM_NVN_BC_RGBA"); enabled = s && !strcmp(s, "1"); }
     return enabled && g_dev && !g_dev.supportsBCTextureCompression;
 }
+// Keep the established RGBA8 fallback unless explicitly comparing compact
+// formats: the A16 Time Trial report did not show a frame-time improvement
+// after moving BC4/BC5 to R8/RG8, and a fresh install also changes caches.
+static int bc_tight_on(void) {
+    static int enabled = -1;
+    if (enabled < 0) { const char *s = getenv("DM_NVN_BC_TIGHT"); enabled = s && !strcmp(s, "1"); }
+    return enabled;
+}
 // Return the BC block family and normalized signedness for a Metal format.
 // BC6H is deliberately excluded: its HDR pixels cannot be represented in RGBA8.
 static int bc_rgba_kind(MTLPixelFormat pf, int *sign) {
@@ -2145,8 +2153,8 @@ static MTLTextureDescriptor *tex_desc(const tex_t *t, int packaged) {
             // A BC texture the game writes or views as raw compressed blocks
             // cannot be emulated by the sampled, CPU-decoded fallback.
             if (!packaged) { RED_ONCE(162, "BC fallback cannot allocate non-packaged format %#x", t->d.format); return nil; }
-            if (kind == 4) pf = MTLPixelFormatR8Unorm;
-            else if (kind == 5) pf = MTLPixelFormatRG8Unorm;
+            if (kind == 4 && bc_tight_on()) pf = MTLPixelFormatR8Unorm;
+            else if (kind == 5 && bc_tight_on()) pf = MTLPixelFormatRG8Unorm;
             else pf = bc_rgba_srgb((MTLPixelFormat)pf) ? MTLPixelFormatRGBA8Unorm_sRGB : MTLPixelFormatRGBA8Unorm;
         } else if ((MTLPixelFormat)pf == MTLPixelFormatBC6H_RGBFloat ||
                    (MTLPixelFormat)pf == MTLPixelFormatBC6H_RGBUfloat) {
@@ -2877,7 +2885,7 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
         if (sparse) nvn_sparse_protect(t->pool, (uint64_t)(uintptr_t)t->mem, t->L.size); else nvn_dirty_protect(t->mem, t->L.size); }
     int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
     unsigned layers = (t->d.target == 4 || t->d.target == 9) ? t->d.depth : t->d.target == 8 ? 6 : t->d.target == 3 ? t->d.height : 1;   // a cube array's depth counts layer-faces (tex_desc)
-    unsigned bc_components = bc_kind == 4 ? 1 : bc_kind == 5 ? 2 : 4;
+    unsigned bc_components = bc_tight_on() && bc_kind == 4 ? 1 : bc_tight_on() && bc_kind == 5 ? 2 : 4;
     size_t total = 0;
     for (unsigned l = 0; l < d.mipmapLevelCount; l++) {
         uint32_t w = MAX(t->d.width >> (l + sk), 1u), h = MAX(t->d.height >> (l + sk), 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
@@ -2955,8 +2963,11 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
                     bc_linear = next; bc_linear_cap = compressed_size;
                 }
                 if (nvn_deswizzle(&t->d, l + sk, y, src, bc_linear, pitch) ||
-                    nvn_bc_decode_tight((unsigned)bc_kind, bc_signed, bc_linear, compressed_size,
-                                        w, h, (uint8_t *)stg.contents + off, pixel_size)) {
+                    (bc_tight_on() ?
+                        nvn_bc_decode_tight((unsigned)bc_kind, bc_signed, bc_linear, compressed_size,
+                                            w, h, (uint8_t *)stg.contents + off, pixel_size) :
+                        nvn_bc_decode_rgba8((unsigned)bc_kind, bc_signed, bc_linear, compressed_size,
+                                            w, h, (uint8_t *)stg.contents + off, pixel_size))) {
                     RED_ONCE(161, "BC fallback failed to deswizzle/decode format %#x level %u", t->d.format, l + sk);
                     memset((uint8_t *)stg.contents + off, 0, pixel_size);
                 }

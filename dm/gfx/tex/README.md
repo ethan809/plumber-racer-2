@@ -21,7 +21,7 @@ The offsets of each level and layer within the storage, and the block height and
 
 ## BC textures
 
-Normal builds require GPUs with BC compressed textures (`supportsBCTextureCompression` of `MTLDevice`: Apple silicon Macs and the latest iPhones) and upload BC as BC. A device without BC is refused at start ([GPUs without BC textures](../../../docs/reference/rendering.md#gpus-without-bc-textures-are-refused-at-start)). The experimental A16 build explicitly enables `DM_NVN_BC_RGBA=1`: packaged BC1/2/3/7 textures decode to RGBA8, BC4 to R8, and BC5 to RG8. BC6H and sparse BC textures remain unsupported. A BC texture is never a render target and its raw blocks are not sampled through an uncompressed view (Metal has no such views; Breath of the Wild encodes one 32×32 BC4 texture on the GPU, GitHub issue #4).
+Normal builds require GPUs with BC compressed textures (`supportsBCTextureCompression` of `MTLDevice`: Apple silicon Macs and the latest iPhones) and upload BC as BC. A device without BC is refused at start ([GPUs without BC textures](../../../docs/reference/rendering.md#gpus-without-bc-textures-are-refused-at-start)). The experimental A16 build explicitly enables `DM_NVN_BC_RGBA=1`: packaged BC1/2/3/4/5/7 textures decode to RGBA8 by default. The unproven compact BC4-to-R8 and BC5-to-RG8 path remains available for a controlled comparison through `DM_NVN_BC_TIGHT=1`; it is not the default after a slower A16 Time Trial report. BC6H and sparse BC textures remain unsupported. A BC texture is never a render target and its raw blocks are not sampled through an uncompressed view (Metal has no such views; Breath of the Wild encodes one 32×32 BC4 texture on the GPU, GitHub issue #4).
 
 ## Tests
 
