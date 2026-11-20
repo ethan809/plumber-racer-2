@@ -55,6 +55,8 @@ A touch layout for racing (`pad_style kartworld`): a floating steering stick, ga
 | Online, local wireless, GameChat | Not available |
 | Save data | Saved in the app's Documents |
 
+Experimental A16 (iPhone 15) observation, 2026-11-20: a BC-to-RGBA build reached the world map after the player freed storage so `mem_file` could use a disk-backed mapping. This is not a validated race or Grand Prix run on A16. The world-map log measured frame-time p50 about 31–37 ms around frames 3000–4200 (GPU p50 22–35 ms), worsening to p50 70 ms and GPU p50 41 ms near frame 13200 with thermal state 2. Shader compilation was 0 ms in the late samples. `DM_RENDER_SCALE=0.01` was rejected by the loader (it accepts 0.5–1.0), leaving the game's original render scale. The experimental branch's launcher range was corrected; 0.5 is the next setting to measure. A16 still has no native BC compression support, and the conversion costs GPU memory.
+
 ## What it needs
 
 | Setting | Where | Why |

@@ -225,6 +225,14 @@ t "pack IPA (already-compressed game files stored, everything else deflated)"
 PULL=$(sed -n 's/^#define DM_GAME_PSO_MTL4 //p' "$DM/host/gen/$GAME/game_profile.h") || die "read game profile header"
 case "$PULL" in 0|1) ;; *) die "no DM_GAME_PSO_MTL4 in generated game profile";; esac
 # Keep this array nonempty: macOS Bash 3.2 treats an empty array as unset under set -u.
-PACK_OPTS=(--store "$(gp zip_store)"); [ -n "${PSO:-}" ] || [ "${IOS_PULL:-$PULL}" = 1 ] || PACK_OPTS+=(--skip-suffix _bp.metallib)
+STORE_SUFFIXES=$(gp zip_store)
+if [ "${DM_IPA_COMPRESS_METALLIB:-0}" = 1 ]; then
+  # Metal libraries can be deflated inside the IPA: iOS extracts them once at
+  # installation, so their runtime contents and shader-loading paths stay the same.
+  # The normal profile keeps storing them for faster packaging; opt in for a smaller download.
+  STORE_SUFFIXES=${STORE_SUFFIXES//.metallib/}
+  t "compress Metal shader libraries inside the IPA (DM_IPA_COMPRESS_METALLIB=1)"
+fi
+PACK_OPTS=(--store "$STORE_SUFFIXES"); [ -n "${PSO:-}" ] || [ "${IOS_PULL:-$PULL}" = 1 ] || PACK_OPTS+=(--skip-suffix _bp.metallib)
 python3 tools/pack_ipa.py "$OUT_IPA" "${PACK_OPTS[@]}" --skip $P/_CodeSignature --skip $P/embedded.mobileprovision --skip $P/msl --skip $P/aoc --skip $P/romfs --skip $P/romfs.img --skip $P/romfs.id "${MAPS[@]}" || die "pack_ipa"
 t "done: $OUT_IPA ($(du -h "$OUT_IPA" | cut -f1))"

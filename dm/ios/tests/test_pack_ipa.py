@@ -162,6 +162,21 @@ class PackIpa(unittest.TestCase):
         self.run_pack(); self.run_pack(None, '--store', '.TXT'); self.assertEqual(self.reused, 5)
         self.same_as_fresh('--store', '.txt')
 
+    def test_opt_in_metallib_compression_keeps_contents(self):
+        shader = self.app / 'sample.metallib'
+        original = b'Metal shader payload, compressible by ZIP. ' * 600
+        shader.write_bytes(original)
+        arc = 'Payload/DmIOS.app/sample.metallib'
+        self.run_pack(None, '--no-reuse', '--store', '.zs:.metallib')
+        with zipfile.ZipFile(self.out) as z:
+            self.assertEqual(z.getinfo(arc).compress_type, zipfile.ZIP_STORED)
+            stored_size = z.getinfo(arc).compress_size
+        self.run_pack(None, '--no-reuse', '--store', '.zs')
+        with zipfile.ZipFile(self.out) as z:
+            self.assertEqual(z.getinfo(arc).compress_type, zipfile.ZIP_DEFLATED)
+            self.assertEqual(z.read(arc), original)
+            self.assertLess(z.getinfo(arc).compress_size, stored_size)
+
     def test_stale_replaced_and_malformed_index(self):
         self.run_pack(); index = Path(str(self.out) + '.idx')
         original = index.read_text()
