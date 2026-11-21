@@ -11789,7 +11789,7 @@ static void framegen_slot_release(dlss_scaler *owner, int slot) {
     if (owner->framegen_slot_ticket[slot] == UINT64_MAX) owner->framegen_slot_ticket[slot] = 0;
     pthread_mutex_unlock(&g_framegen_mu);
 }
-static void mtl_present_wait(uint64_t ticket);
+void mtl_present_wait(uint64_t ticket);
 static dlss_scaler *dlss_scaler_for(const p_dlss *c, id<MTLTexture> col, id<MTLTexture> dep, id<MTLTexture> mot, id<MTLTexture> out, NSUInteger iw, NSUInteger ih) {
     NSUInteger key[9] = {col.pixelFormat, dep.pixelFormat, mot.pixelFormat, out.pixelFormat, iw, ih, out.width, out.height, c->flags};
     dlss_scaler *e = NULL, *spare = NULL;
@@ -13466,35 +13466,63 @@ static uint64_t snap_take(const tex_t *t) {
 }
 static uint64_t present_enqueue(const tex_t *t, double period, const int crop[4], uint64_t ev_val) {
     atomic_store(&dm_present_ns, now_ns());
-    if (g_classic || atomic_load(&g_present_discard)) return 0;   // Ticket number 0 = no pending present; the swapchain texture acquire does not wait (g_classic: no Metal 4 queue to present on)
+    if (g_classic || atomic_load(&g_present_discard)) return 0;
     if (t) { xv_check(t->serial, 0, 0, "present"); if (g_xv_npresent < 128) g_xv_present[g_xv_npresent++] = t->serial; }
+
+    // Match the DLSS output texture to this present. The midpoint is queued before the real frame,
+    // so the existing display-link path presents midpoint -> real without advancing game logic.
+    dlss_scaler *fg_owner = NULL; int fg_slot = -1; uint64_t fg_output = 0;
+    int fg_pending = t && !ev_val && framegen_pending_take(t->serial, &fg_owner, &fg_slot, &fg_output);
+    int use_framegen = fg_pending && fg_output && period >= 0.030;
+    if (fg_pending && !use_framegen) framegen_slot_release(fg_owner, fg_slot);
+
     // A texture whose content comes from its storage is uploaded when it is first resolved (and again when its pages change), in an upload batch only the submit thread may open.
-    // Bastion fills both window textures with WriteTexels at boot (main+0x9374) and presents one before drawing into it: resolved on the present thread, the upload aborted the host.
-    // Resolve it here, where the game queues the present, and commit the batch, so the display command buffer comes after the upload on the queue and the present thread finds it uploaded
+    // Resolve it here, where the game queues the present, so the display command buffer follows the upload on the queue.
     if (t && !ev_val && on_sub_thread() && tex_from_storage(t)) { tex_mtl(t); up_flush(); }
     static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, present_start);
     link_sync();
-    {   // Test switch DM_TEST_LINK_STALL=start seconds,duration seconds: counting from the first present, pause the display link at that point (imitating the display link not calling back while in the foreground) and release it when the duration is up. For verifying the fallback; not set in the product
+    {
         static double t0, at = -1, dur; static int st; double now = CACurrentMediaTime();
         if (at < 0) { at = 0; const char *e = getenv("DM_TEST_LINK_STALL"); if (e && sscanf(e, "%lf,%lf", &at, &dur) == 2 && at > 0 && dur > 0) { t0 = now; st = 1; } else at = 0; }
         if (st == 1 && link_on() && now - t0 >= at) { st = 2; mtl_link_pause(1); MLOG("DM_TEST_LINK_STALL: pausing the display link for %.1f s (frame %llu)", dur, (unsigned long long)atomic_load(&g_cur_frame)); }
         else if (st == 2 && now - t0 >= at + dur) { st = 3; mtl_link_pause(0); MLOG("DM_TEST_LINK_STALL: resuming the display link (frame %llu)", (unsigned long long)atomic_load(&g_cur_frame)); }
     }
     if (ws_on()) { static uint64_t f0; uint64_t f = atomic_load(&g_cur_frame); if (!f0) f0 = f; else if (f >= f0 + 300) { ws_report(f, f - f0); f0 = f; } }
-    tex_t snap; uint64_t ss = 0; int slot = 0;
+    tex_t snap; uint64_t ss = 0; int snap_slot = 0;
     if (t && !ev_val && mtl_snap_on()) {
-        slot = (int)(atomic_load(&g_snap_next) % (uint64_t)g_snap_n);
+        snap_slot = (int)(atomic_load(&g_snap_next) % (uint64_t)g_snap_n);
         if ((ss = snap_take(t))) { memset(&snap, 0, sizeof snap); snap.magic = MAGIC('T', 'E', 'X', 0); snap.serial = ss; t = &snap; }
     }
+
     pthread_mutex_lock(&g_pq_mu);
-    while (g_pq_in - g_pq_done >= PQ) pthread_cond_wait(&g_pq_cv, &g_pq_mu);   // Wait only when the queue is full; normally AcquireTexture blocks first
-    pq_item *it = &g_pq[g_pq_in % PQ]; *it = (pq_item){*t, period, atomic_load(&g_cur_frame), {0}, CACurrentMediaTime(), ev_val, ss ? g_snap[slot].ev : 0};
-    if (crop) memcpy(it->crop, crop, sizeof it->crop);   // The current frame's state is enqueued with the ticket number, rather than reading the mutable window late on the present thread
+    int entries = use_framegen ? 2 : 1;
+    while (g_pq_in - g_pq_done > PQ - entries) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
+    if (use_framegen) {
+        tex_t generated; memset(&generated, 0, sizeof generated);
+        generated.magic = MAGIC('T', 'E', 'X', 0); generated.serial = fg_output;
+        pq_item *generated_item = &g_pq[g_pq_in % PQ];
+        *generated_item = (pq_item){generated, 1.0 / 60.0, atomic_load(&g_cur_frame), {0}, CACurrentMediaTime(), 0, 0};
+        if (crop) memcpy(generated_item->crop, crop, sizeof generated_item->crop);
+        ++g_pq_in;
+    }
+    // Use a 60 Hz minimum period for both entries. If the game renders below 30 Hz,
+    // interpolation only doubles its visual update rate; it cannot create 60 unique frames.
+    double queued_period = use_framegen ? 1.0 / 60.0 : period;
+    pq_item *it = &g_pq[g_pq_in % PQ];
+    *it = (pq_item){*t, queued_period, atomic_load(&g_cur_frame), {0}, CACurrentMediaTime(), ev_val, ss ? g_snap[snap_slot].ev : 0};
+    if (crop) memcpy(it->crop, crop, sizeof it->crop);
     uint64_t tk = ++g_pq_in;
-    if (ss) { g_snap[slot].ticket = tk; atomic_fetch_add(&g_snap_next, 1); }
+    if (use_framegen) {
+        pthread_mutex_lock(&g_framegen_mu);
+        fg_owner->framegen_slot_ticket[fg_slot] = tk;
+        pthread_mutex_unlock(&g_framegen_mu);
+        static int logged;
+        if (!logged++) MLOG("frame generation: queuing a MetalFX midpoint before each matching real frame (60 Hz presentation target)");
+    }
+    if (ss) { g_snap[snap_slot].ticket = tk; atomic_fetch_add(&g_snap_next, 1); }
     pthread_cond_broadcast(&g_pq_cv);
     pthread_mutex_unlock(&g_pq_mu);
-    return ss ? 0 : tk;   // a snapshot: the game's texture is free now (its later draws come after the copy on the queue)
+    return ss ? 0 : tk;
 }
 // Do not wait during discard: the frame enqueued only after the flag was set (the present thread had just passed the flag check) has nobody to take it, and waiting for it would stall again; it is left for the following mtl_drain to clear
 // Do not wait indefinitely in display-link mode: see the note at STALL_NS. Only frames "not yet taken by the display link" are dropped; the one already on its way to the screen is waited for until handed to the GPU (same dropping as when entering the background)
