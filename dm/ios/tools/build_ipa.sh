@@ -47,7 +47,7 @@ if [ "$PREPARE_XCODE" = YES ]; then
   IOS=$(cd "$IOS" && pwd)
   [ "$IOS" != "$IOS_SOURCE" ] || die "the per-game Xcode project must be outside dm/ios"
   # Source links follow repository edits; generated files and build products belong to this game only. Linked again each time: a project prepared from another checkout (a removed worktree) follows this one
-  for item in Sources tools; do ln -sfn "$IOS_SOURCE/$item" "$IOS/$item" || die "link $item"; done
+  for item in Sources tools RamDonor; do ln -sfn "$IOS_SOURCE/$item" "$IOS/$item" || die "link $item"; done
   cp "$IOS_SOURCE/project.yml" "$IOS/project.yml" || die "copy project template"
   cd "$IOS" || die "cd $IOS"
   DM_SCHEME_NAME="$(echo "$DM_DISPLAY_NAME" | tr '/:' '__') ($GAME)"   # the scheme file is named after it
