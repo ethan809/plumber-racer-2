@@ -96,6 +96,14 @@ private struct LauncherView: View {
     @ObservedObject var m: LauncherModel
     let play: () -> Void
     @State private var memory = os_proc_available_memory()
+    @State private var freeStorage = LauncherView.storageFree()
+
+    // The guest file mapping checks this device volume's free space at boot.
+    // Show the same constraint before the player starts a memory-heavy race.
+    private static func storageFree() -> UInt64 {
+        let attrs = try? FileManager.default.attributesOfFileSystem(forPath: NSTemporaryDirectory())
+        return (attrs?[.systemFreeSize] as? NSNumber)?.uint64Value ?? 0
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -146,6 +154,20 @@ private struct LauncherView: View {
                             Spacer()
                             Text(ByteCountFormatter.string(fromByteCount: Int64(memory), countStyle: .memory)).monospacedDigit().foregroundStyle(.secondary)
                         }
+                        if ProcessInfo.processInfo.environment["DM_NVN_BC_RGBA"] == "1" {
+                            HStack {
+                                Text("Storage free")
+                                Spacer()
+                                Text(ByteCountFormatter.string(fromByteCount: Int64(freeStorage), countStyle: .file)).monospacedDigit().foregroundStyle(.secondary)
+                            }
+                            if freeStorage < (7 << 29) {
+                                Text("A16 needs at least 3.5 GiB free to keep guest memory out of the app's RAM limit. Free more storage before racing.")
+                                    .foregroundStyle(.orange)
+                            } else if freeStorage < (5 << 30) {
+                                Text("Disk-backed guest memory is available, but 5 GiB free is recommended for longer races.")
+                                    .foregroundStyle(.orange)
+                            }
+                        }
                     }
                 }
                 .listStyle(.insetGrouped)
@@ -157,6 +179,7 @@ private struct LauncherView: View {
         .task {
             while !Task.isCancelled {
                 memory = os_proc_available_memory()
+                freeStorage = Self.storageFree()
                 try? await Task.sleep(for: .seconds(2))
             }
         }

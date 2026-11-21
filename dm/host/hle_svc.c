@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <TargetConditionals.h>
 
 // Reserve one whole block of guest address space, partitioned the Horizon way (address values are the real addresses returned by the host's mmap).
 // It only takes address space, not memory.
@@ -45,7 +46,12 @@ int dm_guest_as_contains(uintptr_t a) { uintptr_t b = (uintptr_t)g_as; return g_
 // under memory pressure the kernel writes such pages to the file and reads them back on use, as swap, while there is room they stay in memory as before (measured on the
 // Mac: 2 GB written = 2 MB of footprint, 2,055 MB external; a no-copy Metal buffer over it is made, read by the GPU and charges nothing). Memory goes back by punching a hole
 // in the file (guest_release): that range reads as zeros and holds no disk blocks. DM_MEM_FILE=0 / 1 overrides, also from Documents/env.txt; DM_MEM_FILE_DIR the folder
-// (default DM_TEMP's). With less than 4 GB free there, or when the file cannot be made, the block stays anonymous
+// (default DM_TEMP's). With less than 4 GB free there, or when the file cannot be made, the block stays anonymous.
+// The opt-in iOS BC-to-RGBA bridge can use a 3.5 GiB minimum: on the A16 the
+// decoded textures consume substantially more footprint, and an observed
+// 3.7 GiB free left guest memory anonymous and crashed the GPU at ~4 GiB RSS.
+// Keep a conservative reserve for files the game streams, and retain 4 GiB for
+// normal builds. A device below 3.5 GiB still needs storage freed before play.
 // A game's large pools must not get zero-copy buffers on iOS: a buffer's whole range is read into memory and wired when it goes into the residency set, and over file pages that froze
 // Mario Kart World for over a minute on an iPhone 18 Pro at its 2.4 GB main pool (anonymous: under a second) and took 16 s for a 7 MB pool on a Mac short of memory
 static int g_memfd = -1;
@@ -57,7 +63,12 @@ static int mem_file_open(size_t size) {
     if (d && *d) snprintf(dir, sizeof dir, "%s", d); else if (!confstr(_CS_DARWIN_USER_TEMP_DIR, dir, sizeof dir)) snprintf(dir, sizeof dir, "/tmp");
     mkdir(dir, 0700);
     struct statfs fs; uint64_t avail = statfs(dir, &fs) ? 0 : (uint64_t)fs.f_bavail * fs.f_bsize;
-    if (avail < (4ull << 30)) { LOG("[RED] guest memory: %llu MB free in %s, under 4 GB: anonymous memory, all of it in the footprint", (unsigned long long)(avail >> 20), dir); return -1; }
+    uint64_t min_free = 4ull << 30;
+#if TARGET_OS_IPHONE
+    const char *bc = getenv("DM_NVN_BC_RGBA");
+    if (bc && !strcmp(bc, "1")) min_free = 7ull << 29;   // 3.5 GiB for the explicitly experimental A16 bridge only
+#endif
+    if (avail < min_free) { LOG("[RED] guest memory: %llu MB free in %s, below %llu MB required: anonymous memory, all of it in the footprint", (unsigned long long)(avail >> 20), dir, (unsigned long long)(min_free >> 20)); return -1; }
     snprintf(path, sizeof path, "%s/guest_memory.%d", dir, (int)getpid());
     int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
     if (fd < 0) { LOG("[RED] guest memory: %s not made (errno %d): anonymous memory", path, errno); return -1; }

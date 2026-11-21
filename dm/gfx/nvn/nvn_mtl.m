@@ -2131,12 +2131,19 @@ static int tex_atomic_capable(id<MTLTexture> base) { return pf_r32i(base.pixelFo
 // Profile tex_soft (DM_NVN_TEX_SOFT=0 / 1): a large block-compressed texture the game loaded from its files is kept without its finest level, on the GPU and in guest memory: its host
 // texture is that of level 1 (half the size, one level less, sampled through the same normalized coordinates), and the pages only level 0 holds go back to the system (tex_soft_release)
 // (later: soft_sweep, which leaves time for a first copy) and are never read again. About three quarters of a texture's bytes, twice over. Mario Kart World's race does not fit an iPhone 18 Pro otherwise. Level numbers the game gives
-// (views, copies) are one lower here: tex_soft_level. Reads of the size in a shader see the smaller size
+// (views, copies) are one lower here: tex_soft_level. Reads of the size in a shader see the smaller size.
+// On the explicitly enabled iOS BC bridge, decoding makes even 256x256 BC
+// images four-channel, often 4-8x their guest size. Softening eligible
+// 256x256 images too cuts their allocation and upload to one quarter, without
+// altering the sampled texture format. Other games keep their existing rule.
+static int nvn_fmt_bc(uint32_t f);
 static int tex_soft(const tex_t *t) {
     static int on = -1; if (on < 0) { const char *e = getenv("DM_NVN_TEX_SOFT"); on = e && *e ? atoi(e) != 0 : DM_GAME_TEX_SOFT; if (on) MLOG("large block-compressed textures kept without their finest level (profile tex_soft; DM_NVN_TEX_SOFT=0 turns it off)"); }
     if (!on || !t->has_layout || !t->mem || t->d.levels < 3 || (t->d.target != 1 && t->d.target != 4)) return 0;
     if (t->pool && t->pool->magic == MAGIC('P', 'O', 'O', 'L') && (t->pool->flags & NVN_MEMORY_POOL_FLAGS_VIRTUAL)) return 0;   // a sparse pool's: sparse_upload, tiles that follow the game's mappings
-    if (MAX(t->d.width, t->d.height) < 512 || MIN(t->d.width, t->d.height) < 256) return 0;
+    if (MIN(t->d.width, t->d.height) < 256) return 0;
+    if (MAX(t->d.width, t->d.height) < 512 &&
+        !(bc_cpu_fallback() && nvn_fmt_bc(t->d.format))) return 0;
     int bw, bh; if (!nvn_fmt_bpb(t->d.format, &bw, &bh) || bw < 2) return 0;
     uint64_t k = (uint64_t)(uintptr_t)t->mem; pthread_mutex_lock(&g_smu); int hard = nvn_hm_get(&g_soft_hard, &k) != NULL; pthread_mutex_unlock(&g_smu);
     return !hard;

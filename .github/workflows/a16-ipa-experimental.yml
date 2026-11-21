@@ -3,8 +3,8 @@ name: A16 experimental unsigned IPA
 
 on:
   push:
-    branches: [experimental/a16-bc-rgba-renderer, experimental/a16-framegen-check]
-    paths: ['.github/workflows/a16-ipa-experimental.yml', 'dm/ios/tools/build_ipa.sh', 'dm/ios/Sources/main.m', 'dm/ios/Sources/front_ios.m', 'dm/ios/Sources/player_env.h', 'dm/ios/Sources/Launcher.swift', 'dm/ios/Sources/LauncherSettings.swift', 'dm/games/settings.tsv', 'dm/games/settings.py', 'dm/gfx/nvn/nvn_mtl.m', 'dm/gfx/tex/**']
+    branches: [experimental/a16-bc-rgba-renderer, experimental/a16-framegen-check, experimental/a16-memory-stability]
+    paths: ['.github/workflows/a16-ipa-experimental.yml', 'dm/host/hle_svc.c', 'dm/ios/tools/build_ipa.sh', 'dm/ios/Sources/main.m', 'dm/ios/Sources/front_ios.m', 'dm/ios/Sources/player_env.h', 'dm/ios/Sources/Launcher.swift', 'dm/ios/Sources/LauncherSettings.swift', 'dm/games/settings.tsv', 'dm/games/settings.py', 'dm/gfx/nvn/nvn_mtl.m', 'dm/gfx/tex/**']
   workflow_dispatch:
     inputs:
       original_ipa_url:
