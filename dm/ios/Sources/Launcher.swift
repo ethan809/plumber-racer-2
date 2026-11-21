@@ -144,7 +144,7 @@ private struct LauncherView: View {
                             }
                             Button("Apply A16 maximum-FPS preset") { m.applyA16FastPreset() }
                         } footer: {
-                            Text("Battery saver aims for 30 FPS. Maximum-FPS preset tests threaded encoding, shader prefetch and tile rendering at 25% scale; these are experimental and may help or hurt. The RAM donor is a separate memory option and does not add physical RAM. Use Reset to undo performance changes.")
+                            Text("Battery saver aims for 30 FPS. Maximum-FPS preset tests threaded encoding, shader prefetch, tile rendering at 25% scale and MetalFX frame generation. Frame generation may add GPU work, heat and battery use, and only doubles visual updates when matching DLSS depth and motion data are available. The RAM donor is a separate experimental memory option. Use Reset to undo performance changes.")
                         }
                     }
                     CloudSavesSection()
