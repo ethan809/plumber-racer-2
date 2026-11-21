@@ -142,9 +142,9 @@ private struct LauncherView: View {
                             if m.settings.contains(where: { $0.env == "DM_FPS_TARGET" }) {
                                 Button("Apply A16 battery saver (30 FPS)") { m.applyA16BatteryPreset() }
                             }
-                            Button("Apply A16 fast preset") { m.applyA16FastPreset() }
+                            Button("Apply A16 maximum-FPS preset") { m.applyA16FastPreset() }
                         } footer: {
-                            Text("Battery saver aims for 30 FPS with less render and encoding work. Fast preset separately tests threaded Metal encoding. Both can change frame pacing; compare the same Time Trial and use Reset to undo changes.")
+                            Text("Battery saver aims for 30 FPS. Maximum-FPS preset tests threaded encoding, shader prefetch and tile rendering at 25% scale; these are experimental and may help or hurt. The RAM donor is a separate memory option and does not add physical RAM. Use Reset to undo performance changes.")
                         }
                     }
                     CloudSavesSection()
