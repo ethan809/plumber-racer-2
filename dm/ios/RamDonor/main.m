@@ -77,7 +77,6 @@ static xpc_object_t DMRamDonorCreateRegion(uint64_t size, NSString **error) {
     pthread_mutex_lock(&gRegionLock);
     if (gRegionCount >= DM_RAM_DONOR_MAX_CHUNKS) {
         pthread_mutex_unlock(&gRegionLock);
-        xpc_release(shmem);
         mach_vm_deallocate(mach_task_self(), address, size);
         *error = @"Donor chunk limit reached";
         return NULL;
@@ -102,7 +101,6 @@ static void DMRamDonorHandleMessage(xpc_connection_t channel, xpc_object_t messa
         xpc_object_t shmem = DMRamDonorCreateRegion(size, &error);
         if (shmem) {
             xpc_dictionary_set_value(reply, DM_RAM_DONOR_KEY_SHMEM, shmem);
-            xpc_release(shmem);
         } else {
             xpc_dictionary_set_string(reply, DM_RAM_DONOR_KEY_ERROR,
                                       error.UTF8String ?: "unknown allocation error");
@@ -120,7 +118,6 @@ static void DMRamDonorHandleMessage(xpc_connection_t channel, xpc_object_t messa
     }
 
     xpc_connection_send_message(channel, reply);
-    xpc_release(reply);
 }
 
 static void DMRamDonorDisableEndpointClassCheck(id self, SEL command,
@@ -182,7 +179,6 @@ static void DMRamDonorPrepareEndpointDecoding(void) {
     xpc_object_t hello = xpc_dictionary_create(NULL, NULL, 0);
     xpc_dictionary_set_string(hello, DM_RAM_DONOR_KEY_OP, DM_RAM_DONOR_OP_HELLO);
     xpc_connection_send_message(_channel, hello);
-    xpc_release(hello);
     NSLog(@"RAM donor: helper ready (pid %d)", getpid());
 }
 
