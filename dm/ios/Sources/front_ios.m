@@ -4,6 +4,7 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
+#import <MetalFX/MetalFX.h>
 #import <AVFAudio/AVFAudio.h>
 #include <errno.h>
 #include <math.h>
@@ -27,6 +28,30 @@ static CAMetalLayer *g_layer;
 static void front_ios_power_watch(void);
 static void front_ios_audio_watch(void);
 static UILabel *front_ios_fps_label(void);
+
+ // Diagnostic only: ask MetalFX whether this GPU supports its frame interpolator.
+ // This does not create an interpolator or change the game's rendering/presentation path.
+ static NSString *front_ios_framegen_check_message(void) {
+     id<MTLDevice> gpu = MTLCreateSystemDefaultDevice();
+     if (!gpu) {
+         NSString *message = @"No Metal device was found. Frame generation is unavailable.";
+         LOG("frame generation compatibility: no Metal device");
+         return message;
+     }
+     if (@available(iOS 26.0, *)) {
+         BOOL metal3 = [MTLFXFrameInterpolatorDescriptor supportsDevice:gpu];
+         BOOL metal4 = [MTLFXFrameInterpolatorDescriptor supportsMetal4FX:gpu];
+         NSString *message = [NSString stringWithFormat:
+             @"GPU: %@\\nMetalFX (Metal 3): %@\\nMetalFX (Metal 4): %@\\n\\nThis build only checks compatibility. Frame generation is OFF.",
+             gpu.name, metal3 ? @"Supported" : @"Not supported", metal4 ? @"Supported" : @"Not supported"];
+         LOG("frame generation compatibility: GPU=%s MetalFX-Metal3=%s MetalFX-Metal4=%s (probe only; interpolation disabled)",
+             gpu.name.UTF8String, metal3 ? "supported" : "not supported", metal4 ? "supported" : "not supported");
+         return message;
+     }
+     NSString *message = [NSString stringWithFormat:@"GPU: %@\\nMetalFX frame interpolation requires iOS 26 or later.\\nFrame generation is OFF.", gpu.name];
+     LOG("frame generation compatibility: iOS 26 or later is required (probe only)");
+     return message;
+ }
 
 @interface DmGameView : UIView
 @end
@@ -85,6 +110,7 @@ static void tv_attach(void);
 @property (nonatomic, strong) UIView *pad;
 @property (nonatomic, strong) UILabel *fps;
 @property (nonatomic) BOOL launched;
+@property (nonatomic) BOOL frameGenCheckShown;
 @property (nonatomic, strong) id tv;   // the TV scene accessory's registration (iOS 27)
 - (void)startGame;
 @end
@@ -134,6 +160,15 @@ static void launcher_done(void) { [g_root startGame]; }
     front_hud_env();   // before the process's first Metal device, which reads MTL_HUD_ENABLED (an env file's DM_METAL_HUD sets it in main.m already; GitHub issue #840)
     const char *dev = front_ios_device_check();   // that first device: a GPU without BC textures is refused here, not at launch, so the launcher's HUD switch counts
     if (dev) { [self showHint:[NSString stringWithFormat:@"This device is not supported.\n%s", dev]]; return; }   // the host does not start
+    if (!self.frameGenCheckShown) {
+        self.frameGenCheckShown = YES;
+        UIAlertController *check = [UIAlertController alertControllerWithTitle:@"Frame-generation compatibility"
+            message:front_ios_framegen_check_message() preferredStyle:UIAlertControllerStyleAlert];
+        [check addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *action) { (void)action; [self startGame]; }]];
+        [self presentViewController:check animated:YES completion:nil];
+        return;
+    }
     self.game =[[DmGameView alloc] initWithFrame:self.view.bounds];
     [self.view addSubview:self.game];
     g_layer = (CAMetalLayer *)self.game.layer;
