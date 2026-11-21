@@ -4,6 +4,7 @@
 @import Foundation;
 
 #import <mach/mach.h>
+#import <mach/mach_error.h>
 #import <objc/runtime.h>
 #import <os/proc.h>
 #import <xpc/xpc.h>
