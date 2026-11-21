@@ -110,7 +110,7 @@ final class LauncherModel: ObservableObject {
         for s in settings where !fixed.contains(s.env) {
             if let v = choices[s.env], s.accepts(v) { values[s.env] = v }
         }
-        fputs("launcher: experimental A16 maximum-FPS preset selected\\n", stderr)
+        fputs("launcher: experimental A16 maximum-FPS preset selected\n", stderr)
     }
 
     // The battery preset prioritizes a predictable 30 Hz cadence and less
