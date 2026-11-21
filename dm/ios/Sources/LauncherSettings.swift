@@ -93,22 +93,24 @@ final class LauncherModel: ObservableObject {
         fputs("launcher: settings reset to the game's defaults\n", stderr)
     }
 
-    // Experimental A16 BC conversion needs the smallest GPU working set we can give it.
-    // The player opts in on the launcher; every value is validated against the rows
-    // actually offered by this game, and explicit env-file settings remain fixed.
-    // The encode thread and longer GPU segments are experiments, not a promised FPS gain.
+    // Experimental A16 maximum-FPS preset: keep the render and display
+    // working sets at 25%, then test threaded encoding, shader prefetch and
+    // tile-render optimisations. These switches can help or hurt on a given
+    // scene; compare the same Time Trial and use Reset if frame pacing worsens.
+    // The optional RAM donor is deliberately separate because it uses physical
+    // memory and is not itself an FPS setting.
     func applyA16FastPreset() {
         let choices: [String: String] = [
-            "DM_RENDER_SCALE": "0.30", "DM_OPMODE": "0", "DM_PRESENT_UPSCALE": "off",
+            "DM_RENDER_SCALE": "0.25", "DM_OPMODE": "0", "DM_PRESENT_UPSCALE": "off",
             "DM_IOS_LOW_MEMORY": "1", "DM_IOS_DISPLAY_SCALE": "0.25",
             "DM_PRESENT_SNAP": "0", "DM_PSO_MTL4": "0", "DM_PSO_PREBUILD": "0",
-            "DM_NVN_ENC_THREAD": "1", "DM_NVN_CUT": "64", "DM_NVN_PREFETCH": "0",
-            "DM_NVN_TBDR": "0", "DM_METAL_HUD": "0", "DM_TOUCH_HAPTICS": "0"
+            "DM_NVN_ENC_THREAD": "1", "DM_NVN_CUT": "64", "DM_NVN_PREFETCH": "1",
+            "DM_NVN_TBDR": "1", "DM_METAL_HUD": "0", "DM_TOUCH_HAPTICS": "0"
         ]
         for s in settings where !fixed.contains(s.env) {
             if let v = choices[s.env], s.accepts(v) { values[s.env] = v }
         }
-        fputs("launcher: experimental A16 fast preset selected\n", stderr)
+        fputs("launcher: experimental A16 maximum-FPS preset selected\\n", stderr)
     }
 
     // The battery preset prioritizes a predictable 30 Hz cadence and less
