@@ -42,13 +42,13 @@ static UILabel *front_ios_fps_label(void);
          BOOL metal3 = [MTLFXFrameInterpolatorDescriptor supportsDevice:gpu];
          BOOL metal4 = [MTLFXFrameInterpolatorDescriptor supportsMetal4FX:gpu];
          NSString *message = [NSString stringWithFormat:
-             @"GPU: %@\\nMetalFX (Metal 3): %@\\nMetalFX (Metal 4): %@\\n\\nThis build only checks compatibility. Frame generation is OFF.",
+             @"GPU: %@\nMetalFX (Metal 3): %@\nMetalFX (Metal 4): %@\n\nThis build only checks compatibility. Frame generation is OFF.",
              gpu.name, metal3 ? @"Supported" : @"Not supported", metal4 ? @"Supported" : @"Not supported"];
          LOG("frame generation compatibility: GPU=%s MetalFX-Metal3=%s MetalFX-Metal4=%s (probe only; interpolation disabled)",
              gpu.name.UTF8String, metal3 ? "supported" : "not supported", metal4 ? "supported" : "not supported");
          return message;
      }
-     NSString *message = [NSString stringWithFormat:@"GPU: %@\\nMetalFX frame interpolation requires iOS 26 or later.\\nFrame generation is OFF.", gpu.name];
+     NSString *message = [NSString stringWithFormat:@"GPU: %@\nMetalFX frame interpolation requires iOS 26 or later.\nFrame generation is OFF.", gpu.name];
      LOG("frame generation compatibility: iOS 26 or later is required (probe only)");
      return message;
  }
