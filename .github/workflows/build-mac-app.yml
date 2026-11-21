@@ -62,8 +62,15 @@ jobs:
           mkdir -p "$RUNNER_TEMP/game"
           if [ -n "$GAME_DUMP_URL" ]; then
             # Never upload or check the game files into this public repository.
-            "$RUNNER_TEMP/nx-venv/bin/python" -m pip install gdown
-            "$RUNNER_TEMP/nx-venv/bin/python" -m gdown --quiet "$GAME_DUMP_URL" -O "$RUNNER_TEMP/game-dump.zip"
+            case "$GAME_DUMP_URL" in
+              *drive.google.com*|*docs.google.com*|*drive.usercontent.google.com*)
+                "$RUNNER_TEMP/nx-venv/bin/python" -m pip install gdown
+                "$RUNNER_TEMP/nx-venv/bin/python" -m gdown --quiet "$GAME_DUMP_URL" -O "$RUNNER_TEMP/game-dump.zip"
+                ;;
+              *)
+                curl --fail --location --retry 3 --output "$RUNNER_TEMP/game-dump.zip" "$GAME_DUMP_URL"
+                ;;
+            esac
             "$RUNNER_TEMP/nx-venv/bin/python" - <<'PY'
           import pathlib, stat, zipfile, os
           archive = pathlib.Path(os.environ['RUNNER_TEMP']) / 'game-dump.zip'
