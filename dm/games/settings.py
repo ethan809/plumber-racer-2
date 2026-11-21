@@ -71,6 +71,9 @@ def build(gid, patched, control):
     def shown(cond, n):
         if cond == 'always': return True
         if cond == 'languages>1': return len(langs) > 1
+        # A recovered build with frame-step stubs can choose 30/60 fps even
+        # when its profile keeps the game's native timing by default (0).
+        if cond == 'fps_capable': return macro('DM_GAME_FPS_TARGET', n) != '0' or 'FPS_STATE_OFF' in keys
         if cond.startswith('fixups:'): return cond[7:] in keys
         if cond.startswith('gfxapi:'): return os.environ.get('GFXAPI', '') == cond[7:]
         if cond.startswith('platform:'): return platform == cond[9:]

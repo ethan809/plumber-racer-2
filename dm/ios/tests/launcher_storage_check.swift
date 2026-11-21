@@ -32,6 +32,8 @@ import Foundation
         expect(m.values["DM_PSO_MTL4"] == "1" && m.values["DM_FPS_TARGET"] == file.settings.first { $0.env == "DM_FPS_TARGET" }!.def, "Reset shows the defaults")
         m.applyA16FastPreset()
         expect(m.values["DM_PSO_MTL4"] == "0" && m.values["DM_PSO_PREBUILD"] == "0" && m.values["DM_NVN_ENC_THREAD"] == "1" && m.values["DM_RENDER_SCALE"] == "0.30" && m.values["DM_METAL_HUD"] == "1", "A16 preset sets valid fast options but leaves env-file values fixed")
+        m.applyA16BatteryPreset()
+        expect(m.values["DM_FPS_TARGET"] == "30" && m.values["DM_RENDER_SCALE"] == "0.25" && m.values["DM_NVN_ENC_THREAD"] == "0" && m.values["DM_NVN_CUT"] == "32" && m.values["DM_PRESENT_SNAP"] == "0" && m.values["DM_METAL_HUD"] == "1", "A16 battery preset uses 30 fps, less 3D work and no extra encode thread while preserving env-file values")
         m.reset()
         expect(d.string(forKey: "launcher.DM_PSO_MTL4") == "0" && d.string(forKey: "launcher.DM_FPS_TARGET") == "30", "Reset alone forgets nothing: Quit after it keeps the choices")
         expect(m.values["DM_METAL_HUD"] == "1" && !m.changed, "Reset leaves the env file's value; nothing left to reset")

@@ -14,7 +14,7 @@ spec = importlib.util.spec_from_file_location('launcher_settings', ROOT / 'dm/ga
 settings = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(settings)
 
-BOTW, WONDER = '01007EF00011E000', '010015100B514000'
+BOTW, WONDER, MKW = '01007EF00011E000', '010015100B514000', '0400C3F00006E000'
 PERFORMANCE_NVN = ['DM_IOS_LOW_MEMORY', 'DM_IOS_DISPLAY_SCALE', 'DM_PRESENT_SNAP', 'DM_PSO_MTL4', 'DM_PSO_PREBUILD', 'DM_NVN_ENC_THREAD', 'DM_NVN_CUT', 'DM_NVN_PREFETCH', 'DM_NVN_TBDR', 'DM_NVN_GPU_TS', 'DM_FPS_HOLD', 'DM_METAL_HUD']
 
 
@@ -58,6 +58,22 @@ class LauncherSettingsTests(unittest.TestCase):
         self.assertEqual((s['on'], s['off'], s['default']), ('on', 'off', 'on'))
         s = build(BOTW, 'nvn')['DM_SHOW_FPS']
         self.assertEqual((s['on'], s['off']), ('1', '0'))
+
+    def test_frame_step_enables_optional_battery_saver_cap(self):
+        # An iPhone A16 IPA can keep the game's original step at 0 while
+        # exposing a reversible 30 fps option if its recovered main has the
+        # frame-step patch. Never offer a presentation-only cap otherwise.
+        self.assertNotIn('DM_FPS_TARGET', build(MKW, 'nvn'))
+        with tempfile.TemporaryDirectory() as tmp, patch.object(settings.nacp, 'languages', return_value=['en-US']), \
+                patch.dict(os.environ, {'GFXAPI': 'nvn', 'SETTINGS_PLATFORM': 'ios'}):
+            (Path(tmp) / 'main.fixups.tsv').write_text('# FPS_STATE_OFF\t0x1234\n')
+            listed = settings.build(MKW, tmp, Path(tmp) / 'control.nacp')
+        rows = {r['env']: r for r in listed['settings']}
+        self.assertEqual(rows['DM_FPS_TARGET']['default'], '0')
+        self.assertEqual(rows['DM_FPS_TARGET']['options'], [['0', 'Game default'], ['30', '30 fps'], ['60', '60 fps']])
+        self.assertIn('DM_FPS_TARGET', build(BOTW, 'nvn'))   # existing engine/default caps remain available
+        schema = json.loads((ROOT / 'docs/launcher.schema.json').read_text(encoding='utf-8'))
+        self.assertEqual(conforms(listed, schema, schema), [])
 
     def test_iphone_switches_only_on_the_iphone(self):   # the frame-rate counter and touch feedback are the iOS front end's (front_ios.m, DmGamepad.m)
         ios, mac = build(BOTW, 'nvn'), build(BOTW, 'nvn', 'mac')

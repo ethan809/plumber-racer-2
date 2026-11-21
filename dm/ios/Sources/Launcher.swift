@@ -131,9 +131,12 @@ private struct LauncherView: View {
                     }
                     if ProcessInfo.processInfo.environment["DM_NVN_BC_RGBA"] == "1" {
                         Section {
+                            if m.settings.contains(where: { $0.env == "DM_FPS_TARGET" }) {
+                                Button("Apply A16 battery saver (30 FPS)") { m.applyA16BatteryPreset() }
+                            }
                             Button("Apply A16 fast preset") { m.applyA16FastPreset() }
                         } footer: {
-                            Text("Experimental: skips pipeline prebuild and extra frame buffering, uses a separate Metal encoding thread, and reduces display work. May increase stutter or affect stability. Reset to tested defaults to undo it.")
+                            Text("Battery saver aims for 30 FPS with less render and encoding work. Fast preset separately tests threaded Metal encoding. Both can change frame pacing; compare the same Time Trial and use Reset to undo changes.")
                         }
                     }
                     CloudSavesSection()

@@ -111,6 +111,24 @@ final class LauncherModel: ObservableObject {
         fputs("launcher: experimental A16 fast preset selected\n", stderr)
     }
 
+    // The battery preset prioritizes a predictable 30 Hz cadence and less
+    // CPU/GPU work. A frame-rate row is only included for games with a host
+    // frame-step patch (or another validated profile FPS cap). It never tries
+    // to throttle a fixed-step game using presentation alone.
+    func applyA16BatteryPreset() {
+        let choices: [String: String] = [
+            "DM_FPS_TARGET": "30", "DM_RENDER_SCALE": "0.25", "DM_OPMODE": "0",
+            "DM_PRESENT_UPSCALE": "off", "DM_IOS_LOW_MEMORY": "1", "DM_IOS_DISPLAY_SCALE": "0.25",
+            "DM_PRESENT_SNAP": "0", "DM_PSO_MTL4": "0", "DM_PSO_PREBUILD": "0",
+            "DM_NVN_ENC_THREAD": "0", "DM_NVN_CUT": "32", "DM_NVN_PREFETCH": "0",
+            "DM_NVN_TBDR": "0", "DM_METAL_HUD": "0", "DM_TOUCH_HAPTICS": "0"
+        ]
+        for s in settings where !fixed.contains(s.env) {
+            if let v = choices[s.env], s.accepts(v) { values[s.env] = v }
+        }
+        fputs("launcher: A16 30 fps battery preset selected\n", stderr)
+    }
+
     // Before the game starts: every setting not set by an env file goes into the environment (DM_LANG replaces the packed language main.m set as a default). Only a choice that
     // differs from the game's default is stored: a setting the player left at its default follows the defaults of a later build (the settings it was tested with)
     func apply() {

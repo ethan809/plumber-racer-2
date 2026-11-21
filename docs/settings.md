@@ -22,11 +22,11 @@ A Mac app carries the same list (`Contents/Resources/dm/launcher.json`), without
 
 ### Frame rate
 
-Games whose speed the app controls (Breath of the Wild, Tears of the Kingdom and a few others) offer **30 fps** or **60 fps**. 60 is smoother; 30 is what the Switch ran and uses less power, so the phone stays cooler and the battery lasts longer. The game runs at real speed either way.
+Games whose speed the app controls (Breath of the Wild, Tears of the Kingdom and a few others) offer the game's own limit, **30 fps**, or **60 fps**. 60 is smoother; 30 uses less power in scenes that could otherwise run faster, helping the phone stay cooler. A recovered game with a verified frame-step patch can offer this choice even if its default is the game's own timing. If a game does not have a compatible frame step or engine limiter, the app does not offer a presentation-only cap that might change gameplay speed.
 
 ### Render scale
 
-The size of the 3D picture, from 50 to 100 %. Below 100 % the size is fixed there and the game's own dynamic resolution is off; 100 % keeps the game's own. Lower can be lighter on the GPU but is blurrier; the HUD and text keep their sharpness. Only games the app can scale offer it.
+The size of the 3D picture, from 25 to 100 %. Below 100 % the size is fixed there and the game's own dynamic resolution is off; 100 % keeps the game's own. Lower can be lighter on the GPU but is blurrier; the HUD and text keep their sharpness. Only games the app can scale offer it.
 
 ### Console mode
 
@@ -217,7 +217,7 @@ A line like `DM_PRESENT_SNAP=0` in `Documents/env.txt` (in the Files app, under 
 
 | Setting | Variable | Values |
 |---|---|---|
-| Frame rate | `DM_FPS_TARGET` | `30`, `60` |
+| Frame rate | `DM_FPS_TARGET` | `0` (game default), `30`, `60`; shown when the game supports a host-controlled frame rate |
 | Render scale | `DM_RENDER_SCALE` | `0.25` to `1.0` (25–100%, with lower values producing a softer picture) |
 | Console mode | `DM_OPMODE` | `1` docked, `0` handheld |
 | Game language | `DM_LANG` | a language code, such as `ja` |
