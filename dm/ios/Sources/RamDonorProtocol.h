@@ -20,7 +20,7 @@
 #define DM_RAM_DONOR_OP_RELEASE "release"
 
 @interface NSXPCListenerEndpoint (DMRamDonorPrivate)
-@property (nonatomic, setter=_setEndpoint:) xpc_object_t _endpoint;
+@property (nonatomic, strong, setter=_setEndpoint:) xpc_object_t _endpoint;
 @end
 
 static inline NSXPCListenerEndpoint *DMRamDonorWrapEndpoint(xpc_endpoint_t endpoint) {
