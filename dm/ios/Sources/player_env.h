@@ -4,6 +4,8 @@
 #pragma once
 #include <string.h>
 static inline int dm_player_diagnostic_key(const char *key) {
+    // The A16 BC-to-RGBA fallback is a renderer compatibility switch, not a diagnostic override.
+    if(!strcmp(key,"DM_NVN_BC_RGBA"))return 0;
     // Encoding placement changes scheduling, not diagnostics or launcher state.
     if(!strcmp(key,"DM_NVN_ENC_THREAD"))return 0;
     static const char *const prefixes[]={"DM_NVN_","DM_TEST_","MTL_DEBUG_","MTL_SHADER_VALIDATION"};
