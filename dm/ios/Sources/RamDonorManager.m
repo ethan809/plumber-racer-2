@@ -162,10 +162,12 @@ static BOOL DMRamDonorStart(void) {
 
     if (dispatch_semaphore_wait(started, dispatch_time(DISPATCH_TIME_NOW, 12 * NSEC_PER_SEC))) {
         DMRamLog("donor extension did not start within 12 seconds");
+        [extension _kill:SIGTERM];
         return NO;
     }
     if (!requestIdentifier) {
         DMRamLog("donor extension returned no request identifier");
+        [extension _kill:SIGTERM];
         return NO;
     }
     if (dispatch_semaphore_wait(gConnected, dispatch_time(DISPATCH_TIME_NOW, 12 * NSEC_PER_SEC))) {
