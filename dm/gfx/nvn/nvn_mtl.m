@@ -11706,15 +11706,103 @@ static void copy_t2t(const p_copy_t2t *c) {
 // vectors at the input's size, inverted depth, with 0x40 for its DLSSAutoExposure). Where MetalFX takes no scaler for the formats, or a depth or motion texture is missing, the input is scaled
 // bilinearly into the output with a red line: the frame stays whole, without the temporal gain
 enum { DLSS_F_DEPTH_INVERTED = 1 << 3, DLSS_F_AUTO_EXPOSURE = 1 << 6 };
-typedef struct { uint64_t net; id<MTL4FXTemporalScaler> sc; NSUInteger key[9]; int fresh; } dlss_scaler;
+#define DM_FRAMEGEN_OUTPUTS 2
+#define DM_FRAMEGEN_PENDING 8
+typedef struct {
+    uint64_t net;
+    id<MTL4FXTemporalScaler> sc;
+    id<MTL4FXFrameInterpolator> framegen;
+    id<MTLTexture> framegen_prev_color;
+    id<MTLTexture> framegen_output[DM_FRAMEGEN_OUTPUTS];
+    uint64_t framegen_output_serial[DM_FRAMEGEN_OUTPUTS];
+    uint64_t framegen_slot_ticket[DM_FRAMEGEN_OUTPUTS]; // UINT64_MAX = reserved, not yet enqueued
+    NSUInteger key[9], framegen_key[7];
+    unsigned framegen_next_slot;
+    int fresh, framegen_has_prev, framegen_failed;
+    double framegen_last_time;
+} dlss_scaler;
 static dlss_scaler g_dlss[4];
 static id<MTL4Compiler> g_dlss_comp;
+static int g_framegen_mode = -1;
+static _Atomic uint64_t g_framegen_serial;
+static pthread_mutex_t g_framegen_mu = PTHREAD_MUTEX_INITIALIZER;
+typedef struct {
+    uint64_t source_serial, output_serial, frame;
+    dlss_scaler *owner;
+    int slot;
+} framegen_pending;
+static framegen_pending g_framegen_pending[DM_FRAMEGEN_PENDING];
+static unsigned g_framegen_pending_next;
+
+static int framegen_enabled(void) {
+    if (g_framegen_mode < 0) {
+        const char *e = getenv("DM_FRAME_GEN");
+        g_framegen_mode = e && atoi(e) != 0;
+        MLOG("MetalFX frame generation (DM_FRAME_GEN): %s", g_framegen_mode ? "requested" : "off");
+    }
+    return g_framegen_mode;
+}
+static uint64_t framegen_register_texture(id<MTLTexture> texture) {
+    uint64_t serial = (1ull << 60) + atomic_fetch_add(&g_framegen_serial, 1) + 1;
+    res_add(texture);
+    serial_put(serial, texture);
+    return serial;
+}
+static void framegen_pending_release(framegen_pending *p) {
+    if (p->owner && p->slot >= 0 && p->slot < DM_FRAMEGEN_OUTPUTS &&
+        p->owner->framegen_slot_ticket[p->slot] == UINT64_MAX)
+        p->owner->framegen_slot_ticket[p->slot] = 0;
+    memset(p, 0, sizeof *p);
+}
+static void framegen_pending_clear_owner(dlss_scaler *owner) {
+    pthread_mutex_lock(&g_framegen_mu);
+    for (int i = 0; i < DM_FRAMEGEN_PENDING; i++)
+        if (g_framegen_pending[i].owner == owner) framegen_pending_release(&g_framegen_pending[i]);
+    pthread_mutex_unlock(&g_framegen_mu);
+}
+static void framegen_pending_put(uint64_t source, dlss_scaler *owner, int slot, uint64_t output) {
+    pthread_mutex_lock(&g_framegen_mu);
+    unsigned k = g_framegen_pending_next++ % DM_FRAMEGEN_PENDING;
+    if (g_framegen_pending[k].source_serial) framegen_pending_release(&g_framegen_pending[k]);
+    g_framegen_pending[k] = (framegen_pending){source, output, atomic_load(&g_cur_frame), owner, slot};
+    pthread_mutex_unlock(&g_framegen_mu);
+}
+static int framegen_pending_take(uint64_t source, dlss_scaler **owner, int *slot, uint64_t *output) {
+    uint64_t frame = atomic_load(&g_cur_frame);
+    int found = 0;
+    pthread_mutex_lock(&g_framegen_mu);
+    for (int i = 0; i < DM_FRAMEGEN_PENDING; i++) {
+        framegen_pending *p = &g_framegen_pending[i];
+        if (!p->source_serial) continue;
+        if (p->frame + 2 < frame) { framegen_pending_release(p); continue; }
+        if (p->source_serial == source) {
+            *owner = p->owner; *slot = p->slot; *output = p->output_serial;
+            memset(p, 0, sizeof *p); found = 1; break;
+        }
+    }
+    pthread_mutex_unlock(&g_framegen_mu);
+    return found;
+}
+static void framegen_slot_release(dlss_scaler *owner, int slot) {
+    if (!owner || slot < 0 || slot >= DM_FRAMEGEN_OUTPUTS) return;
+    pthread_mutex_lock(&g_framegen_mu);
+    if (owner->framegen_slot_ticket[slot] == UINT64_MAX) owner->framegen_slot_ticket[slot] = 0;
+    pthread_mutex_unlock(&g_framegen_mu);
+}
+static void mtl_present_wait(uint64_t ticket);
 static dlss_scaler *dlss_scaler_for(const p_dlss *c, id<MTLTexture> col, id<MTLTexture> dep, id<MTLTexture> mot, id<MTLTexture> out, NSUInteger iw, NSUInteger ih) {
     NSUInteger key[9] = {col.pixelFormat, dep.pixelFormat, mot.pixelFormat, out.pixelFormat, iw, ih, out.width, out.height, c->flags};
     dlss_scaler *e = NULL, *spare = NULL;
     for (int i = 0; i < 4 && !e; i++) { if (g_dlss[i].net == c->net) e = &g_dlss[i]; else if (!g_dlss[i].net && !spare) spare = &g_dlss[i]; }
     if (!e) { e = spare ? spare : &g_dlss[0]; e->net = c->net; e->sc = nil; memset(e->key, 0, sizeof e->key); }
     if (!memcmp(e->key, key, sizeof key)) return e->sc ? e : NULL;
+    framegen_pending_clear_owner(e);
+    e->framegen = nil; e->framegen_prev_color = nil;
+    for (int i = 0; i < DM_FRAMEGEN_OUTPUTS; i++) {
+        e->framegen_output[i] = nil; e->framegen_output_serial[i] = 0; e->framegen_slot_ticket[i] = 0;
+    }
+    memset(e->framegen_key, 0, sizeof e->framegen_key);
+    e->framegen_next_slot = 0; e->framegen_has_prev = 0; e->framegen_failed = 0; e->framegen_last_time = 0;
     memcpy(e->key, key, sizeof key); e->sc = nil; e->fresh = 1;
     NSError *err = nil;
     if (!g_dlss_comp) g_dlss_comp = [g_dev newCompilerWithDescriptor:[MTL4CompilerDescriptor new] error:&err];
@@ -11730,6 +11818,149 @@ static dlss_scaler *dlss_scaler_for(const p_dlss *c, id<MTLTexture> col, id<MTLT
     else MLOG("DLSS: MetalFX temporal scaler %lux%lu → %lux%lu, colour format %lu, depth %lu, motion %lu, output %lu", (unsigned long)iw, (unsigned long)ih, (unsigned long)out.width, (unsigned long)out.height,
               (unsigned long)col.pixelFormat, (unsigned long)dep.pixelFormat, (unsigned long)mot.pixelFormat, (unsigned long)out.pixelFormat);
     return e->sc ? e : NULL;
+}
+static int framegen_prepare(dlss_scaler *e, id<MTLTexture> color,
+                             id<MTLTexture> depth, id<MTLTexture> motion) {
+    if (!framegen_enabled() || e->framegen_failed) return 0;
+    if (!depth || !motion || depth.width != motion.width || depth.height != motion.height) {
+        e->framegen_failed = 1;
+        MLOG("[RED] frame generation: depth and motion textures are missing or have different sizes");
+        return 0;
+    }
+    NSUInteger key[7] = {color.width, color.height, color.pixelFormat,
+                         depth.width, depth.height, depth.pixelFormat, motion.pixelFormat};
+    if (e->framegen && !memcmp(e->framegen_key, key, sizeof key)) return 1;
+    if (![MTLFXFrameInterpolatorDescriptor supportsMetal4FX:g_dev]) {
+        e->framegen_failed = 1;
+        MLOG("[RED] frame generation requested, but this GPU does not support Metal 4 frame interpolation; native presentation remains enabled");
+        return 0;
+    }
+
+    MTLFXFrameInterpolatorDescriptor *d = [MTLFXFrameInterpolatorDescriptor new];
+    d.colorTextureFormat = color.pixelFormat;
+    d.depthTextureFormat = depth.pixelFormat;
+    d.motionTextureFormat = motion.pixelFormat;
+    d.outputTextureFormat = color.pixelFormat;
+    d.inputWidth = depth.width; d.inputHeight = depth.height;
+    d.outputWidth = color.width; d.outputHeight = color.height;
+    id<MTL4FXFrameInterpolator> fi = g_dlss_comp
+        ? [d newFrameInterpolatorWithDevice:g_dev compiler:g_dlss_comp] : nil;
+    if (!fi) {
+        e->framegen_failed = 1;
+        MLOG("[RED] frame generation: MetalFX could not create an interpolator for colour %lu, depth %lu, motion %lu, %lux%lu",
+             (unsigned long)color.pixelFormat, (unsigned long)depth.pixelFormat, (unsigned long)motion.pixelFormat,
+             (unsigned long)color.width, (unsigned long)color.height);
+        return 0;
+    }
+
+    MTLTextureDescriptor *pd = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:color.pixelFormat
+                                                                                  width:color.width height:color.height mipmapped:NO];
+    pd.storageMode = MTLStorageModePrivate;
+    pd.usage = fi.colorTextureUsage | MTLTextureUsageShaderRead;
+    id<MTLTexture> previous = [g_dev newTextureWithDescriptor:pd];
+
+    MTLTextureDescriptor *od = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:color.pixelFormat
+                                                                                  width:color.width height:color.height mipmapped:NO];
+    od.storageMode = MTLStorageModePrivate;
+    od.usage = fi.outputTextureUsage | MTLTextureUsageShaderRead;
+    id<MTLTexture> outputs[DM_FRAMEGEN_OUTPUTS] = {nil, nil};
+    for (int i = 0; i < DM_FRAMEGEN_OUTPUTS; i++) outputs[i] = [g_dev newTextureWithDescriptor:od];
+    if (!previous || !outputs[0] || !outputs[1]) {
+        e->framegen_failed = 1;
+        MLOG("[RED] frame generation: not enough memory for the history/output textures; continuing without interpolation");
+        return 0;
+    }
+
+    // Old textures stay registered until the app exits if the game's resolution changes mid-session;
+    // this avoids removing an allocation while an earlier present may still be using it.
+    e->framegen = fi;
+    e->framegen_prev_color = previous;
+    memcpy(e->framegen_key, key, sizeof key);
+    e->framegen_has_prev = 0; e->framegen_last_time = 0; e->framegen_next_slot = 0;
+    for (int i = 0; i < DM_FRAMEGEN_OUTPUTS; i++) {
+        e->framegen_output[i] = outputs[i];
+        e->framegen_output_serial[i] = framegen_register_texture(outputs[i]);
+        e->framegen_slot_ticket[i] = 0;
+    }
+    res_add(previous);
+    res_commit();
+    MLOG("frame generation: Metal 4 interpolator ready, %lux%lu colour with %lux%lu depth/motion, two output slots",
+         (unsigned long)color.width, (unsigned long)color.height,
+         (unsigned long)depth.width, (unsigned long)depth.height);
+    return 1;
+}
+static int framegen_copy_previous(id<MTLTexture> source, id<MTLTexture> destination) {
+    id<MTL4ComputeCommandEncoder> ce = [g_cb computeCommandEncoder];
+    if (!ce) return 0;
+    [ce barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageBlit visibilityOptions:resource_vis()];
+    [ce copyFromTexture:source sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+             sourceSize:MTLSizeMake(source.width, source.height, 1)
+               toTexture:destination destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+    [ce barrierAfterStages:MTLStageBlit beforeQueueStages:MTLStageAll visibilityOptions:resource_vis()];
+    [ce endEncoding];
+    return 1;
+}
+static void framegen_encode(dlss_scaler *e, const p_dlss *c, id<MTLTexture> color,
+                            id<MTLTexture> depth, id<MTLTexture> motion) {
+    if (!framegen_enabled() || !e->framegen) return;
+    double now = CACurrentMediaTime();
+    double dt = e->framegen_last_time > 0 ? now - e->framegen_last_time : 1.0 / 30.0;
+    if (!(dt > 0.0 && dt <= 0.25)) dt = 1.0 / 30.0;
+
+    if (!e->framegen_has_prev) {
+        if (framegen_copy_previous(color, e->framegen_prev_color)) e->framegen_has_prev = 1;
+        e->framegen_last_time = now;
+        return;
+    }
+
+    int slot = (int)(e->framegen_next_slot++ % DM_FRAMEGEN_OUTPUTS);
+    pthread_mutex_lock(&g_framegen_mu);
+    uint64_t wait_ticket = e->framegen_slot_ticket[slot];
+    if (wait_ticket == UINT64_MAX) {
+        pthread_mutex_unlock(&g_framegen_mu);
+        framegen_copy_previous(color, e->framegen_prev_color);
+        e->framegen_last_time = now;
+        return; // This output is still awaiting its present enqueue; skip instead of overwriting it.
+    }
+    e->framegen_slot_ticket[slot] = UINT64_MAX;
+    pthread_mutex_unlock(&g_framegen_mu);
+    if (wait_ticket) mtl_present_wait(wait_ticket);
+
+    id<MTL4FXFrameInterpolator> fi = e->framegen;
+    fi.colorTexture = color;
+    fi.prevColorTexture = e->framegen_prev_color;
+    fi.depthTexture = depth;
+    fi.motionTexture = motion;
+    fi.outputTexture = e->framegen_output[slot];
+    fi.contentWidth = (int)color.width;
+    fi.contentHeight = (int)color.height;
+    fi.depthContentOffsetX = c->base[DLSS_DEPTH][0];
+    fi.depthContentOffsetY = c->base[DLSS_DEPTH][1];
+    fi.motionContentOffsetX = c->base[DLSS_MOTION][0];
+    fi.motionContentOffsetY = c->base[DLSS_MOTION][1];
+    fi.outputOffsetX = c->base[DLSS_OUTPUT][0];
+    fi.outputOffsetY = c->base[DLSS_OUTPUT][1];
+    fi.motionVectorScaleX = c->mv[0];
+    fi.motionVectorScaleY = c->mv[1];
+    fi.jitterOffsetX = c->jitter[0];
+    fi.jitterOffsetY = c->jitter[1];
+    fi.deltaTime = (float)dt;
+    fi.depthReversed = (c->flags & DLSS_F_DEPTH_INVERTED) != 0;
+    fi.shouldResetHistory = c->reset || dt > 0.20;
+    fi.aspectRatio = (float)color.width / (float)MAX(color.height, 1u);
+    fi.fieldOfView = 65.0f;  // NVN's DLSS parameters don't expose the camera projection.
+    fi.nearPlane = 0.1f;
+    fi.farPlane = 10000.0f;
+    [fi encodeToCommandBuffer:g_cb];
+
+    if (!framegen_copy_previous(color, e->framegen_prev_color)) {
+        framegen_slot_release(e, slot);
+        e->framegen_has_prev = 0;
+        e->framegen_last_time = now;
+        return;
+    }
+    e->framegen_last_time = now;
+    framegen_pending_put(c->tex[DLSS_OUTPUT]->serial, e, slot, e->framegen_output_serial[slot]);
 }
 static void dlss_eval(const p_dlss *c) {
     rp_flush();   // the passes before it land first: they write its inputs
@@ -11751,16 +11982,29 @@ static void dlss_eval(const p_dlss *c) {
     if ((dep.usage & sc.depthTextureUsage) != sc.depthTextureUsage) dep = tex_upgrade(c->tex[DLSS_DEPTH], dep, sc.depthTextureUsage, dep.pixelFormat);
     if ((mot.usage & sc.motionTextureUsage) != sc.motionTextureUsage) mot = tex_upgrade(c->tex[DLSS_MOTION], mot, sc.motionTextureUsage, mot.pixelFormat);
     if ((out.usage & sc.outputTextureUsage) != sc.outputTextureUsage) out = tex_upgrade(c->tex[DLSS_OUTPUT], out, sc.outputTextureUsage, out.pixelFormat);
-    id<MTLTexture> expo = c->tex[DLSS_EXPOSURE] ? tex_mtl(c->tex[DLSS_EXPOSURE]) : nil;
+    int framegen_ready = framegen_prepare(e, out, dep, mot);
+    if (framegen_ready) {
+        id<MTL4FXFrameInterpolator> fi = e->framegen;
+        if ((out.usage & fi.colorTextureUsage) != fi.colorTextureUsage) out = tex_upgrade(c->tex[DLSS_OUTPUT], out, fi.colorTextureUsage, out.pixelFormat);
+        if ((dep.usage & fi.depthTextureUsage) != fi.depthTextureUsage) dep = tex_upgrade(c->tex[DLSS_DEPTH], dep, fi.depthTextureUsage, dep.pixelFormat);
+        if ((mot.usage & fi.motionTextureUsage) != fi.motionTextureUsage) mot = tex_upgrade(c->tex[DLSS_MOTION], mot, fi.motionTextureUsage, mot.pixelFormat);
+        if ((out.usage & fi.colorTextureUsage) != fi.colorTextureUsage ||
+            (dep.usage & fi.depthTextureUsage) != fi.depthTextureUsage ||
+            (mot.usage & fi.motionTextureUsage) != fi.motionTextureUsage) {
+            e->framegen_failed = 1; framegen_ready = 0;
+            MLOG("[RED] frame generation: input texture usage requirements could not be met; native frames remain enabled");
+        }
+    }
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }   // a usage upgrade copies through it
     ubd_land_compute();
     id<MTL4ComputeCommandEncoder> ce = [g_cb computeCommandEncoder];   // the scaler's encoders come after the frame's work so far: MetalFX opens encoders of its own, which take no barrier
     [ce barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageBlit visibilityOptions:resource_vis()];
     [ce barrierAfterStages:MTLStageBlit beforeQueueStages:MTLStageAll visibilityOptions:resource_vis()];
     [ce endEncoding];
-    sc.colorTexture = col; sc.depthTexture = dep; sc.motionTexture = mot; sc.outputTexture = out; sc.exposureTexture = expo;
+    sc.colorTexture = col; sc.depthTexture = dep; sc.motionTexture = mot; sc.outputTexture = out;
+    sc.exposureTexture = c->tex[DLSS_EXPOSURE] ? tex_mtl(c->tex[DLSS_EXPOSURE]) : nil;
     sc.inputContentWidth = iw; sc.inputContentHeight = ih;
-    if (@available(macOS 27.0, iOS 27.0, *)) {   // the rectangles' corners: all at the origin on the game seen, so an older system loses nothing there
+    if (@available(macOS 27.0, iOS 27.0, *)) {
         sc.colorContentOffsetX = (NSUInteger)c->base[DLSS_COLOR][0]; sc.colorContentOffsetY = (NSUInteger)c->base[DLSS_COLOR][1];
         sc.depthContentOffsetX = (NSUInteger)c->base[DLSS_DEPTH][0]; sc.depthContentOffsetY = (NSUInteger)c->base[DLSS_DEPTH][1];
         sc.motionContentOffsetX = (NSUInteger)c->base[DLSS_MOTION][0]; sc.motionContentOffsetY = (NSUInteger)c->base[DLSS_MOTION][1];
@@ -11774,6 +12018,7 @@ static void dlss_eval(const p_dlss *c) {
     sc.depthReversed = (c->flags & DLSS_F_DEPTH_INVERTED) != 0;
     sc.reset = c->reset || e->fresh; e->fresh = 0;
     [sc encodeToCommandBuffer:g_cb];
+    if (framegen_ready) framegen_encode(e, c, out, dep, mot);
     if (c->tex[DLSS_BIAS]) { static int once; if (!once++) MLOG("[RED] DLSS: the game's bias mask (a reactive mask for MetalFX) is not passed on"); }
 }
 
