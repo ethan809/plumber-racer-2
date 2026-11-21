@@ -1,84 +1,156 @@
 name: Build Mario Kart World Mac app
+
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
+      game_dump_url:
+        description: 'Google Drive/direct ZIP link to your own decrypted game dump (base/exefs and base/romfs); leave blank to reuse an Actions artifact'
+        type: string
+        required: false
+        default: ''
       source_run_id:
-        description: 'Previous Actions run ID with game dump artifact, or auto'
+        description: 'Older workflow run ID containing a game-dump artifact, or auto'
+        type: string
         required: false
         default: auto
-        type: string
       source_artifact:
-        description: 'Game dump artifact name, or auto'
+        description: 'Game-dump artifact name, or auto'
+        type: string
         required: false
         default: auto
-        type: string
+
 permissions:
   actions: read
   contents: read
+
 jobs:
   build-mac:
-    runs-on: macos-15-arm64
-    timeout-minutes: 240
+    # The existing xcode-27 runner has successfully built this repository's iOS
+    # artifacts. The old macos-15-arm64 jobs were cancelled without starting.
+    runs-on: xcode-27
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
-      - name: Locate previous game dump
-        id: source
+
+      - name: Select Apple Silicon Xcode toolchain
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          sudo xcode-select -s /Applications/Xcode_27.2.app/Contents/Developer
+          xcodebuild -version
+          xcodebuild -downloadComponent MetalToolchain
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          brew install python@3.13 xcodegen zstd glslang
+          if ! command -v dotnet >/dev/null 2>&1; then
+            brew install --cask dotnet-sdk
+          fi
+          /opt/homebrew/opt/python@3.13/bin/python3.13 -m venv "$RUNNER_TEMP/nx-venv"
+          "$RUNNER_TEMP/nx-venv/bin/python" -m pip install lz4 'capstone>=5,<6' fonttools nsz zbic
+          "$RUNNER_TEMP/nx-venv/bin/python" --version
+
+      - name: Recover owner's game dump
         env:
           GH_TOKEN: ${{ github.token }}
+          GAME_DUMP_URL: ${{ inputs.game_dump_url }}
           REQUESTED_RUN: ${{ inputs.source_run_id }}
           REQUESTED_ARTIFACT: ${{ inputs.source_artifact }}
         run: |
-          python3 - <<'PY'
-          import json,os,subprocess
-          repo=os.environ["GITHUB_REPOSITORY"]
-          run=os.environ.get("REQUESTED_RUN") or "auto"
-          artifact=os.environ.get("REQUESTED_ARTIFACT") or "auto"
-          if run=="auto":
-              items=json.loads(subprocess.check_output(["gh","api",f"repos/{repo}/actions/artifacts?per_page=100"],text=True))["artifacts"]
-              matches=[a for a in items if not a["expired"] and ("dump" in a["name"].lower() or "game" in a["name"].lower()) and "ipa" not in a["name"].lower()]
-              if not matches: raise SystemExit("No game dump artifact found. A prior IPA alone is not sufficient for the native Mac build.")
-              selected=next((a for a in matches if a["name"]==artifact),matches[0]) if artifact!="auto" else matches[0]
-              run=str(selected["workflow_run"]["id"])
-              artifact=selected["name"]
-          elif artifact=="auto":
-              raise SystemExit("When providing a run ID, also provide its game dump artifact name.")
-          with open(os.environ["GITHUB_OUTPUT"],"a") as f:
-              f.write(f"run_id={run}\nartifact={artifact}\n")
-          print(f"Using artifact {artifact} from run {run}")
-          PY
-      - name: Download game dump
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ steps.source.outputs.run_id }}
-          ARTIFACT: ${{ steps.source.outputs.artifact }}
-        run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/game"
-          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT" --dir "$RUNNER_TEMP/game"
-      - name: Validate dump
-        run: |
-          test -f "$RUNNER_TEMP/game/base/exefs/main" || { echo "::error::Missing base/exefs/main"; exit 1; }
-          test -d "$RUNNER_TEMP/game/base/romfs" || { echo "::error::Missing base/romfs"; exit 1; }
-      - name: Install tools
-        run: |
-          xcodebuild -version
-          brew install xcodegen zstd glslang
-          brew install --cask dotnet-sdk || true
-          python3 -m pip install lz4 'capstone>=5,<6' fonttools nsz zbic
-      - name: Build native macOS app
-        run: |
-          python3 scripts/build_ipa_from_nsp.py "$RUNNER_TEMP/game" --platform mac-app
-      - name: Package app
-        run: |
-          APP="$RUNNER_TEMP/game/Mario Kart World.app"
-          if [ ! -d "$APP" ]; then
-            APP="$(find "$RUNNER_TEMP/game" -maxdepth 2 -name '*.app' -type d -print -quit)"
+          if [ -n "$GAME_DUMP_URL" ]; then
+            # Never upload or check the game files into this public repository.
+            "$RUNNER_TEMP/nx-venv/bin/python" -m pip install gdown
+            "$RUNNER_TEMP/nx-venv/bin/python" -m gdown --quiet "$GAME_DUMP_URL" -O "$RUNNER_TEMP/game-dump.zip"
+            "$RUNNER_TEMP/nx-venv/bin/python" - <<'PY'
+          import pathlib, stat, zipfile, os
+          archive = pathlib.Path(os.environ['RUNNER_TEMP']) / 'game-dump.zip'
+          target = pathlib.Path(os.environ['RUNNER_TEMP']) / 'game'
+          with zipfile.ZipFile(archive) as z:
+              for member in z.infolist():
+                  parts = pathlib.PurePosixPath(member.filename).parts
+                  if not parts or '..' in parts or member.filename.startswith('/'):
+                      raise SystemExit('Unsafe game dump ZIP path')
+                  if stat.S_ISLNK(member.external_attr >> 16):
+                      raise SystemExit('ZIP symlinks are not supported')
+              z.extractall(target)
+          PY
+          else
+            "$RUNNER_TEMP/nx-venv/bin/python" - <<'PY'
+          import json, os, subprocess
+          repo = os.environ['GITHUB_REPOSITORY']
+          requested_run = os.environ.get('REQUESTED_RUN') or 'auto'
+          preferred = os.environ.get('REQUESTED_ARTIFACT') or 'auto'
+          if requested_run == 'auto':
+              artifacts = json.loads(subprocess.check_output(
+                  ['gh', 'api', f'repos/{repo}/actions/artifacts?per_page=100'], text=True))['artifacts']
+              matches = [a for a in artifacts if not a['expired']
+                         and ('dump' in a['name'].lower() or 'game' in a['name'].lower())
+                         and 'ipa' not in a['name'].lower() and 'mac' not in a['name'].lower()]
+              if preferred != 'auto':
+                  matches = [a for a in matches if a['name'] == preferred]
+              if not matches:
+                  raise SystemExit('No game dump artifact exists. Run manually with game_dump_url pointing to a ZIP of base/exefs and base/romfs. An IPA or RomFS.img alone cannot build a native Mac app.')
+              selected = matches[0]
+              requested_run = str(selected['workflow_run']['id'])
+              preferred = selected['name']
+          elif preferred == 'auto':
+              raise SystemExit('Provide source_artifact when source_run_id is specified.')
+          subprocess.run(['gh', 'run', 'download', requested_run, '--repo', repo,
+                          '--name', preferred, '--dir', os.environ['RUNNER_TEMP'] + '/game'], check=True)
+          print('Downloaded game dump artifact:', preferred)
+          PY
           fi
-          test -n "$APP" && test -d "$APP"
+
+      - name: Validate game dump and storage
+        id: game
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/nx-venv/bin/python" - <<'PY'
+          import os, pathlib, shutil
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'game'
+          matches = [p.parent.parent.parent for p in root.rglob('base/exefs/main')]
+          if len(matches) != 1:
+              raise SystemExit('Expected exactly one extracted base/exefs/main in the dump ZIP.')
+          game = matches[0]
+          required = ('base/exefs/main', 'base/exefs/main.npdm', 'base/exefs/sdk',
+                      'base/exefs/subsdk0', 'base/exefs/rtld', 'base/romfs')
+          missing = [name for name in required if not (game / name).exists()]
+          if missing:
+              raise SystemExit('Incomplete game dump; missing: ' + ', '.join(missing))
+          with (game / 'base/exefs/main').open('rb') as f:
+              f.seek(0x40)
+              build_id = f.read(16).hex()
+          if build_id != '9e244438c3d8ef1c703a6a85ef99c4f0':
+              raise SystemExit('Unsupported game build ID: ' + build_id + '; this port needs 1.0.0')
+          free = shutil.disk_usage(game).free
+          if free < 25 * 1024**3:
+              raise SystemExit(f'Only {free / 1024**3:.1f} GiB free after extraction; need at least 25 GiB for the build')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'path={game}\n')
+          print('Game 1.0.0 dump verified; ready for native macOS build')
+          PY
+
+      - name: Build native Mac app
+        env:
+          GAME_DIR: ${{ steps.game.outputs.path }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/nx-venv/bin/python" scripts/build_ipa_from_nsp.py "$GAME_DIR" --platform mac-app --gpu none
+
+      - name: Package Mac app
+        env:
+          GAME_DIR: ${{ steps.game.outputs.path }}
+        run: |
+          set -euo pipefail
+          APP="$GAME_DIR/Mario Kart World.app"
+          test -d "$APP" || { echo '::error::The Mac build did not create Mario Kart World.app'; exit 1; }
           ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/MarioKartWorld-Mac.zip"
-      - uses: actions/upload-artifact@v4
+
+      - name: Upload Mac app
+        uses: actions/upload-artifact@v4
         with:
           name: MarioKartWorld-Mac
           path: ${{ runner.temp }}/MarioKartWorld-Mac.zip
