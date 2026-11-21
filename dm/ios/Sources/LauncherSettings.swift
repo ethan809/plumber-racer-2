@@ -105,7 +105,7 @@ final class LauncherModel: ObservableObject {
             "DM_IOS_LOW_MEMORY": "1", "DM_IOS_DISPLAY_SCALE": "0.25",
             "DM_PRESENT_SNAP": "0", "DM_PSO_MTL4": "0", "DM_PSO_PREBUILD": "0",
             "DM_NVN_ENC_THREAD": "1", "DM_NVN_CUT": "64", "DM_NVN_PREFETCH": "1",
-            "DM_NVN_TBDR": "1", "DM_METAL_HUD": "0", "DM_TOUCH_HAPTICS": "0"
+            "DM_NVN_TBDR": "1", "DM_FRAME_GEN": "1", "DM_METAL_HUD": "0", "DM_TOUCH_HAPTICS": "0"
         ]
         for s in settings where !fixed.contains(s.env) {
             if let v = choices[s.env], s.accepts(v) { values[s.env] = v }
