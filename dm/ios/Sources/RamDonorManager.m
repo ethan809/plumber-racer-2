@@ -12,6 +12,11 @@
 #import <unistd.h>
 #import <string.h>
 #import <stdlib.h>
+#import <stdio.h>
+#import <stdarg.h>
+#import <errno.h>
+#import <dispatch/dispatch.h>
+#import <mach/mach_error.h>
 
 extern kern_return_t mach_vm_remap(vm_map_t target, mach_vm_address_t *address,
                                    mach_vm_size_t size, mach_vm_offset_t mask,
@@ -143,7 +148,6 @@ static BOOL DMRamDonorStart(void) {
         return NO;
     }
     NSXPCListenerEndpoint *wrapped = DMRamDonorWrapEndpoint(endpoint);
-    xpc_release(endpoint);
 
     NSExtensionItem *item = [NSExtensionItem new];
     item.userInfo = @{ @"endpoint": wrapped };
@@ -217,10 +221,31 @@ static BOOL DMRamDonorMapChunk(uintptr_t target, size_t size) {
     xpc_retain(shmem);
     xpc_release(reply);
 
+    pthread_mutex_lock(&gLock);
+    BOOL tableHasRoom = gMappedCount < DM_RAM_DONOR_MAX_CHUNKS;
+    pthread_mutex_unlock(&gLock);
+    if (!tableHasRoom) {
+        xpc_release(shmem);
+        DMRamLog("mapped-chunk table is full");
+        return NO;
+    }
+
+    size_t pages = size / 4096;
+    size_t bitmapBytes = (pages + 7) / 8;
+    uint8_t *live = calloc(1, bitmapBytes);
+    if (!live) {
+        xpc_release(shmem);
+        DMRamLog("could not allocate donor page bitmap");
+        return NO;
+    }
+    memset(live, 0xff, bitmapBytes);
+    if (pages & 7) live[bitmapBytes - 1] = (uint8_t)((1u << (pages & 7)) - 1u);
+
     void *scratch = NULL;
     size_t mappedSize = xpc_shmem_map(shmem, &scratch);
     if (!scratch || mappedSize < size) {
         if (scratch && mappedSize) mach_vm_deallocate(mach_task_self(), (mach_vm_address_t)scratch, mappedSize);
+        free(live);
         xpc_release(shmem);
         DMRamLog("xpc_shmem_map returned only %zu of %zu bytes", mappedSize, size);
         return NO;
@@ -235,32 +260,20 @@ static BOOL DMRamDonorMapChunk(uintptr_t target, size_t size) {
         &maximumProtection, VM_INHERIT_SHARE);
     mach_vm_deallocate(mach_task_self(), (mach_vm_address_t)scratch, mappedSize);
     if (kr != KERN_SUCCESS || destination != (mach_vm_address_t)target) {
+        free(live);
         xpc_release(shmem);
         DMRamLog("mach_vm_remap failed for guest heap chunk: %s", mach_error_string(kr));
         return NO;
     }
 
-    size_t pages = size / 4096;
-    size_t bitmapBytes = (pages + 7) / 8;
-    uint8_t *live = calloc(1, bitmapBytes);
-    if (!live) {
-        // Restore the mapping to an inaccessible anonymous region; the caller
-        // will keep using the original file-backed range if this chunk is lost.
-        mmap((void *)target, size, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
-        xpc_release(shmem);
-        DMRamLog("could not allocate donor page bitmap");
-        return NO;
-    }
-    memset(live, 0xff, bitmapBytes);
-    if (pages & 7) live[bitmapBytes - 1] = (uint8_t)((1u << (pages & 7)) - 1u);
-
     pthread_mutex_lock(&gLock);
     if (gMappedCount >= DM_RAM_DONOR_MAX_CHUNKS) {
         pthread_mutex_unlock(&gLock);
         free(live);
-        mmap((void *)target, size, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
-        xpc_release(shmem);
-        DMRamLog("mapped-chunk table is full");
+        // This cannot occur during the single startup mapping pass. If it
+        // does, leave the mapped region in place rather than replacing it with
+        // an anonymous range that would break the existing file-backed heap.
+        DMRamLog("mapped-chunk table filled after mapping a chunk");
         return NO;
     }
     gMapped[gMappedCount++] = (DMRamMappedChunk){
