@@ -159,6 +159,7 @@ class LauncherSettingsTests(unittest.TestCase):
             s = {row['env']: row for row in listed['settings']}['DM_RENDER_SCALE']
             self.assertEqual((s['kind'], s['min'], s['max'], s['step'], s['default']),
                              ('range', 0.25, 1.0, 0.05, expected))
+            self.assertNotIn('experimental', s['note'].lower())
             schema = json.loads((ROOT / 'docs/launcher.schema.json').read_text(encoding='utf-8'))
             self.assertEqual(conforms(listed, schema, schema), [])
 

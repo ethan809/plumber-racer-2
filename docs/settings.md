@@ -218,7 +218,7 @@ A line like `DM_PRESENT_SNAP=0` in `Documents/env.txt` (in the Files app, under 
 | Setting | Variable | Values |
 |---|---|---|
 | Frame rate | `DM_FPS_TARGET` | `30`, `60` |
-| Render scale | `DM_RENDER_SCALE` | `0.25` to `1.0` (below `0.5` experimental; may affect small render targets) |
+| Render scale | `DM_RENDER_SCALE` | `0.25` to `1.0` (25–100%, with lower values producing a softer picture) |
 | Console mode | `DM_OPMODE` | `1` docked, `0` handheld |
 | Game language | `DM_LANG` | a language code, such as `ja` |
 | Display mode (Mac) | `DM_FULLSCREEN` | `1` fullscreen, `0` a window |
