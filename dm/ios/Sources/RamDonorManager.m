@@ -18,6 +18,8 @@
 #import <errno.h>
 #import <dispatch/dispatch.h>
 
+extern kern_return_t mach_vm_deallocate(vm_map_t target, mach_vm_address_t address,
+                                        mach_vm_size_t size);
 extern kern_return_t mach_vm_remap(vm_map_t target, mach_vm_address_t *address,
                                    mach_vm_size_t size, mach_vm_offset_t mask,
                                    int flags, vm_map_t source,
