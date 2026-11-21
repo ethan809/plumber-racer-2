@@ -3,11 +3,6 @@ name: Build Mario Kart World Mac app
 on:
   workflow_dispatch:
     inputs:
-      game_dump_url:
-        description: 'Google Drive/direct ZIP link to your own decrypted game dump (base/exefs and base/romfs); leave blank to reuse an Actions artifact'
-        type: string
-        required: false
-        default: ''
       source_run_id:
         description: 'Older workflow run ID containing a game-dump artifact, or auto'
         type: string
@@ -30,6 +25,15 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 360
     steps:
+      - name: Keep game files private
+        env:
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [ "$REPO_PRIVATE" != true ]; then
+            echo '::error::This repository is public. A finished Mac app contains game files, and its artifact would be downloadable by others. Use scripts/build_mkw_mac.sh on your own Mac, or run this workflow from a private repository with the MKW_GAME_DUMP_URL Actions secret.'
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       - name: Select Apple Silicon Xcode toolchain
@@ -54,7 +58,7 @@ jobs:
       - name: Recover owner's game dump
         env:
           GH_TOKEN: ${{ github.token }}
-          GAME_DUMP_URL: ${{ inputs.game_dump_url }}
+          GAME_DUMP_URL: ${{ secrets.MKW_GAME_DUMP_URL }}
           REQUESTED_RUN: ${{ inputs.source_run_id }}
           REQUESTED_ARTIFACT: ${{ inputs.source_artifact }}
         run: |
@@ -99,7 +103,7 @@ jobs:
               if preferred != 'auto':
                   matches = [a for a in matches if a['name'] == preferred]
               if not matches:
-                  raise SystemExit('No game dump artifact exists. Run manually with game_dump_url pointing to a ZIP of base/exefs and base/romfs. An IPA or RomFS.img alone cannot build a native Mac app.')
+                  raise SystemExit('No game dump artifact exists. Set the private-repository MKW_GAME_DUMP_URL Actions secret to a ZIP of base/exefs and base/romfs. An IPA or RomFS.img alone cannot build a native Mac app.')
               selected = matches[0]
               requested_run = str(selected['workflow_run']['id'])
               preferred = selected['name']
