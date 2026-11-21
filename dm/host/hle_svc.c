@@ -14,6 +14,14 @@
 #include <sys/stat.h>
 #include <TargetConditionals.h>
 
+#if TARGET_OS_IPHONE
+// Implemented by the optional iOS helper-extension target. The regular
+// file-backed guest-memory path remains the fallback when the donor is absent.
+extern size_t dm_ram_donor_map_heap(void *target, size_t requested);
+extern void dm_ram_donor_restore_range(void *address, size_t size,
+                                       int memory_file_fd, void *guest_as_base);
+#endif
+
 // Reserve one whole block of guest address space, partitioned the Horizon way (address values are the real addresses returned by the host's mmap).
 // It only takes address space, not memory.
 // Size 5 GB: the game needs the first 1 GB (alias region, stacks) + one whole heap block (application memory pool of 3285 MiB, see APP_POOL below),
@@ -107,6 +115,27 @@ static void mem_init_once(void) {
     if (!(g_alias_bits = calloc((g_alias_cap >> 18) + 1, sizeof *g_alias_bits))) die("alias region page bitmap calloc");
     if (!(g_alias_exposed = calloc(g_alias_cap / pg / 64 + 1, sizeof *g_alias_exposed))) die("alias exposure bitmap calloc");
     LOG("guest AS %p +%#llx  heap %p alias %p stack %p", g_as, (unsigned long long)g_reserve, g_heap, g_alias, g_stack);
+#if TARGET_OS_IPHONE
+    // Opt-in 1 GiB maximum of shared, donor-backed heap memory. The helper
+    // extension owns the purgeable shared-memory objects, so their pages are
+    // outside this app process's individual footprint limit. This does not
+    // create RAM: the device still accounts for the physical pages globally.
+    const char *ram_donor = getenv("DM_RAM_DONOR");
+    if (ram_donor && atoi(ram_donor) == 1) {
+        size_t request = (size_t)1 << 30;
+        if (request > g_heap_cap) request = g_heap_cap;
+        size_t donated = dm_ram_donor_map_heap(g_heap, request);
+        if (donated) {
+            if (mprotect(g_heap, donated, PROT_NONE)) {
+                LOG("[RED] RAM donor: could not protect the donated guest heap (errno %d); restoring file-backed memory", errno);
+                dm_ram_donor_restore_range(g_heap, donated, g_memfd, g_as);
+            } else {
+                LOG("[mem] RAM donor mapped %.2f GB of guest heap; the remaining heap stays file-backed",
+                    donated / 1073741824.0);
+            }
+        }
+    }
+#endif
     const char *aw = getenv("DM_ALIAS_WINDOWS");
     if (aw && atoi(aw) > 0) { pthread_t th; if (!pthread_create(&th, NULL, alias_windows_thread, (void *)(uintptr_t)atoi(aw))) pthread_detach(th); }
     if (DM_GAME_ZERO_RELEASE && g_memfd < 0) { pthread_t th; if (!pthread_create(&th, NULL, zero_sweep_thread, NULL)) pthread_detach(th); }
@@ -293,6 +322,12 @@ static void *zero_sweep_thread(void *arg) {
     return NULL;
 }
 static int guest_release(uintptr_t lo, uintptr_t hi) {
+#if TARGET_OS_IPHONE
+    // Replace any donor-backed pages being released with their original
+    // sparse file mapping before punching the file hole. Metal buffers that
+    // still reference the old shared object retain their own backing pages.
+    dm_ram_donor_restore_range((void *)lo, hi - lo, g_memfd, g_as);
+#endif
     if (g_memfd >= 0) {   // mem_file: a hole in the file. Pages a no-copy buffer holds stay as they are, bytes and all (measured): then the range is not fresh
         if (mprotect((void *)lo, hi - lo, PROT_NONE)) die("guest_release mprotect %#lx+%#lx errno=%d", (unsigned long)lo, (unsigned long)(hi - lo), errno);
         fpunchhole_t ph = {0, 0, (off_t)(lo - (uintptr_t)g_as), (off_t)(hi - lo)};
