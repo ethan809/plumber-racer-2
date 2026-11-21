@@ -3,7 +3,7 @@ name: A16 experimental unsigned IPA
 
 on:
   push:
-    branches: [experimental/a16-bc-rgba-renderer]
+    branches: [experimental/a16-bc-rgba-renderer, experimental/a16-framegen-check]
     paths: ['.github/workflows/a16-ipa-experimental.yml', 'dm/ios/tools/build_ipa.sh', 'dm/ios/Sources/main.m', 'dm/ios/Sources/front_ios.m', 'dm/ios/Sources/Launcher.swift', 'dm/ios/Sources/LauncherSettings.swift', 'dm/games/settings.tsv', 'dm/games/settings.py', 'dm/gfx/nvn/nvn_mtl.m', 'dm/gfx/tex/**']
   workflow_dispatch:
     inputs:
@@ -113,7 +113,7 @@ jobs:
           export STD_FONT="$RUNNER_TEMP/original/dm/font/standard.ttf"
           export DM_ROMFS_ID_FILE="$RUNNER_TEMP/original/romfs.id"
           export DM_ENV_FILE="$RUNNER_TEMP/a16-env.txt"
-          printf 'DM_NVN_BC_RGBA=1\n' > "$DM_ENV_FILE"
+          printf 'DM_NVN_BC_RGBA=1\\n' > "$DM_ENV_FILE"
           mkdir -p "$W"
           mkdir -p "$W/data/v0"
           python3 - "$W/data/v0/control.nacp" <<'PY'
@@ -160,4 +160,4 @@ jobs:
       - name: Show build errors if unsuccessful
         if: failure()
         run: |
-          find "$RUNNER_TEMP" -path '*/pkg/build.log' -print -exec sh -c 'grep -E "error:|fatal error:" "$1" | head -40' sh {} \; || true
+          find "$RUNNER_TEMP" -path '*/pkg/build.log' -print -exec sh -c 'grep -E "error:|fatal error:" "$1" | head -40' sh {} \\; || true
